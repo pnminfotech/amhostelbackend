@@ -145,34 +145,27 @@ const formSchema = new mongoose.Schema(
     leaveDate: { type: String },
 
     // ✅ Updated: supports both legacy disk URLs and DB-backed files
-    documents: [
-      {
-        fileName: { type: String },
+  documents: [
+  {
+    fileName: { type: String },
 
-        // legacy (disk) link — keep for old records
-        url: { type: String },
+    // ✅ ImageKit direct URL
+    url: { type: String },
 
-        // NEW: DB-backed fields (DocumentFile model)
-        fileId: { type: mongoose.Schema.Types.ObjectId, ref: "DocumentFile" },
-        contentType: { type: String },
-        size: { type: Number },
-        relation: {
-          type: String,
-          enum: [
-            "Self",
-            "Father",
-            "Mother",
-            "Husband",
-            "Sister",
-            "Brother",
-            "Self Aadhaar Card",
-            "Parent Aadhaar Card",
-            "Tenant Photo",
-          ],
-          default: "Self",
-        },
-      },
-    ],
+    // ✅ ImageKit fileId is STRING (not ObjectId)
+    fileId: { type: String },
+
+    // ✅ Optional but useful (ImageKit filePath)
+    filePath: { type: String },
+
+    contentType: { type: String },
+    size: { type: Number },
+
+    // keep relation simple (or keep your enum if you want)
+    relation: { type: String, default: "Document" },
+  },
+],
+
   },
   { timestamps: true }
 );

@@ -1,97 +1,107 @@
 // routes/tenantDocs.js
 const express = require("express");
 const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
-const Form = require("../models/Form"); // ⬅️ Make sure this path/model name is correct
+const sharp = require("sharp");
+const ImageKit = require("imagekit");
+
+const Form = require("../models/Form"); // ✅ confirm correct model path
 const Invite = require("../models/Invite");
 
 const router = express.Router();
 
-/* ================== Ensure upload folder exists ================== */
-const uploadDir = path.join(__dirname, "..", "uploads", "tenant_docs");
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-/* ================== Multer config (disk storage) ================== */
-const storage = multer.diskStorage({
-  destination: function (req, file, cb) {
-    cb(null, uploadDir);
-  },
-  filename: function (req, file, cb) {
-    const unique = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    const ext = path.extname(file.originalname);
-    cb(null, unique + ext);
-  },
+/* ================== ImageKit ================== */
+const imagekit = new ImageKit({
+  publicKey: process.env.IMAGEKIT_PUBLIC_KEY || "",
+  privateKey: process.env.IMAGEKIT_PRIVATE_KEY || "",
+  urlEndpoint: process.env.IMAGEKIT_URL_ENDPOINT || "",
 });
 
-const upload = multer({ storage });
+const canUseImagekit =
+  !!process.env.IMAGEKIT_PUBLIC_KEY &&
+  !!process.env.IMAGEKIT_PRIVATE_KEY &&
+  !!process.env.IMAGEKIT_URL_ENDPOINT;
 
-/**
- * POST /api/tenant/with-docs
- *
- * Body fields (sent as form-data text fields):
- *   srNo, name, joiningDate, roomNo, bedNo, depositAmount,
- *   address, phoneNo,
- *   relativeAddress,
- *   relative1Relation, relative1Name, relative1Phone,
- *   relative2Relation, relative2Name, relative2Phone,
- *   companyAddress, dateOfJoiningCollege, dob,
- *   baseRent, rentAmount, ...
- *
- * Files (sent as form-data file fields):
- *   selfAadhar, parentAadhar, photo
- */
-// router.post(
-//   "/with-docs",
-//   upload.fields([
-//     { name: "selfAadhar", maxCount: 1 },
-//     { name: "parentAadhar", maxCount: 1 },
-//     { name: "photo", maxCount: 1 },
-//   ]),
-//   async (req, res) => {
-//     try {
-//       console.log("REQ BODY BEFORE FIX:", req.body);
+/* ================== Multer (memory) ================== */
+const upload = multer({ storage: multer.memoryStorage() });
 
-//       // 🔒 Ensure srNo exists
-//       if (req.body.srNo === undefined || req.body.srNo === null || req.body.srNo === "") {
-//         const lastForm = await Form.findOne().sort({ srNo: -1 });
-//         req.body.srNo = lastForm ? lastForm.srNo + 1 : 1;
-//       }
-//       req.body.srNo = Number(req.body.srNo);
+/* ================== Helpers ================== */
+const TARGET = 10 * 1024; // 10 KB (your choice)
 
-//       // Prepare data to save/update
-//       const updateData = { ...req.body };
+async function compressUnder10KB(buf) {
+  let q = 80, w = null;
+  let out = await sharp(buf).webp({ quality: q }).toBuffer();
 
-//       // Attach files if uploaded
-//       if (req.files?.selfAadhar) updateData.selfAadhar = req.files.selfAadhar[0].path;
-//       if (req.files?.parentAadhar) updateData.parentAadhar = req.files.parentAadhar[0].path;
-//       if (req.files?.photo) updateData.photo = req.files.photo[0].path;
+  while (out.length > TARGET && (q > 30 || w === null || w > 200)) {
+    if (q > 30) q -= 10;
+    else {
+      const meta = await sharp(buf).metadata();
+      w = w || meta.width || 800;
+      w = Math.max(200, Math.floor(w * 0.8));
+    }
 
-//       let savedForm;
+    const p = sharp(buf);
+    if (w) p.resize({ width: w, withoutEnlargement: true });
+    out = await p.webp({ quality: q }).toBuffer();
+  }
 
-//       // 🔑 If formId exists → update, else create new
-//       if (req.body.formId && req.body.formId !== "undefined") {
-//         savedForm = await Form.findByIdAndUpdate(req.body.formId, { $set: updateData }, { new: true });
-//         if (!savedForm) return res.status(404).json({ message: "Form not found" });
-//       } else {
-//         const newForm = new Form(updateData);
-//         savedForm = await newForm.save();
-//       }
+  if (out.length > TARGET) {
+    out = await sharp(buf)
+      .resize({ width: 200, withoutEnlargement: true })
+      .webp({ quality: 25 })
+      .toBuffer();
+  }
 
-//       res.status(200).json({
-//         message: req.body.formId ? "Tenant details updated successfully" : "Form saved successfully",
-//         data: savedForm,
-//       });
+  return out;
+}
 
-//     } catch (error) {
-//       console.error("Error in POST /api/tenant/with-docs:", error);
-//       res.status(500).json({ message: error.message });
-//     }
-//   }
-// );
+function cleanMoney(v) {
+  const n = Number(String(v ?? "").replace(/[,₹\s]/g, ""));
+  return Number.isFinite(n) ? n : undefined;
+}
 
+function cleanPhone(v) {
+  const s = String(v ?? "").replace(/\D/g, "").slice(0, 10);
+  return s || undefined;
+}
+
+// ✅ ignore empty fields + disallow rents edits here
+function buildPatch(body) {
+  const patch = {};
+
+  for (const [k, v] of Object.entries(body || {})) {
+    if (["formId", "inv", "srNo"].includes(k)) continue;
+    if (v === undefined || v === null) continue;
+    if (v === "" || v === "undefined") continue;
+    patch[k] = v;
+  }
+
+  delete patch.rents;
+  delete patch.rentPaid;
+  delete patch.month;
+  delete patch.date;
+
+  // money
+  ["baseRent", "rentAmount", "depositAmount"].forEach((f) => {
+    if (patch[f] !== undefined) {
+      const n = cleanMoney(patch[f]);
+      if (n === undefined) delete patch[f];
+      else patch[f] = n;
+    }
+  });
+
+  // phone
+  ["phoneNo", "relative1Phone", "relative2Phone"].forEach((f) => {
+    if (patch[f] !== undefined) {
+      const p = cleanPhone(patch[f]);
+      if (!p) delete patch[f];
+      else patch[f] = p;
+    }
+  });
+
+  return patch;
+}
+
+/* ================== Route ================== */
 router.post(
   "/with-docs",
   upload.fields([
@@ -121,84 +131,94 @@ router.post(
         formId = String(inviteDoc.usedByFormId);
       }
 
-      // ✅ Build PATCH update (ignore empty fields)
-      function buildPatch(body) {
-        const patch = {};
-
-        for (const [k, v] of Object.entries(body || {})) {
-          if (["formId", "inv", "srNo"].includes(k)) continue;
-          if (v === undefined || v === null) continue;
-          if (v === "" || v === "undefined") continue; // ignore empty strings
-          patch[k] = v;
-        }
-
-        // 🔒 Safety: never allow these via this route
-        delete patch.rents;
-        delete patch.rentPaid;
-        delete patch.month;
-        delete patch.date;
-
-        // Convert money fields
-        const moneyFields = ["baseRent", "rentAmount", "depositAmount"];
-        for (const f of moneyFields) {
-          if (patch[f] !== undefined) {
-            const n = Number(String(patch[f]).replace(/[,₹\s]/g, ""));
-            if (!Number.isFinite(n)) delete patch[f];
-            else patch[f] = n;
-          }
-        }
-
-        // Normalize phone fields (optional safety)
-        const phoneFields = ["phoneNo", "relative1Phone", "relative2Phone"];
-        for (const f of phoneFields) {
-          if (patch[f] !== undefined) {
-            patch[f] = String(patch[f]).replace(/\D/g, "").slice(0, 10);
-            if (!patch[f]) delete patch[f];
-          }
-        }
-
-        return patch;
-      }
-
       const updateData = buildPatch(req.body);
 
-      // ✅ Attach files (files should override)
-      if (req.files?.selfAadhar) updateData.selfAadhar = req.files.selfAadhar[0].path;
-      if (req.files?.parentAadhar) updateData.parentAadhar = req.files.parentAadhar[0].path;
-      if (req.files?.photo) updateData.photo = req.files.photo[0].path;
-
-      // ✅ If invite exists → lock fields that were prefilled by admin
+      // ✅ If invite exists → lock prefilled fields
       if (inv) {
         if (!inviteDoc) {
           const now = new Date();
           inviteDoc = await Invite.findOne({ token: inv, expiresAt: { $gt: now } });
         }
-
         const lockedKeys = Object.keys(inviteDoc?.prefill || {});
         lockedKeys.forEach((k) => delete updateData[k]);
-
-        // (optional) force-lock these always if you want:
-        // ["name","phoneNo","roomNo","bedNo","depositAmount","joiningDate"].forEach(k => delete updateData[k]);
       }
 
-      // ✅ If inv present but still no formId → reject
       if (inv && (!formId || formId === "undefined")) {
         return res.status(400).json({ message: "Invalid/expired invite link" });
       }
 
+      // ✅ Upload files to ImageKit and push into documents[]
+      const docsToAdd = [];
+
+      async function uploadOne(file, relationLabel) {
+        if (!file) return;
+
+        if (!canUseImagekit) {
+          docsToAdd.push({
+            fileName: file.originalname,
+            relation: relationLabel,
+            url: null,
+            fileId: null,
+            filePath: null,
+            contentType: file.mimetype,
+            size: file.size,
+            note: "ImageKit not configured",
+          });
+          return;
+        }
+
+        const safeBase = (file.originalname || "doc").replace(/[^\w.\-]/g, "_");
+
+        // if image -> compress to webp
+        let uploadBuffer = file.buffer;
+        let contentType = file.mimetype;
+        let uploadName = `${Date.now()}_${safeBase}`;
+
+        if (/^image\//i.test(file.mimetype)) {
+          uploadBuffer = await compressUnder10KB(file.buffer);
+          contentType = "image/webp";
+          uploadName = `${Date.now()}_${safeBase}.webp`;
+        }
+
+        const up = await imagekit.upload({
+          file: uploadBuffer,
+          fileName: uploadName,
+          folder: "/mutakegirlshostel/tenant_docs",
+          useUniqueFileName: true,
+        });
+
+        // ✅ EXACTLY HERE your doc.url becomes:
+        // "https://ik.imagekit.io/<id>/mutakegirlshostel/tenant_docs/....webp"
+        docsToAdd.push({
+          fileName: file.originalname,
+          relation: relationLabel,
+          url: up.url,           // ✅ ImageKit direct URL
+          fileId: up.fileId,     // ✅ ImageKit fileId (string)
+          filePath: up.filePath, // ✅ ImageKit filePath (string)
+          contentType,
+          size: uploadBuffer.length,
+        });
+      }
+
+      await uploadOne(req.files?.selfAadhar?.[0], "Self Aadhaar Card");
+      await uploadOne(req.files?.parentAadhar?.[0], "Parent Aadhaar Card");
+      await uploadOne(req.files?.photo?.[0], "Tenant Photo");
+
       let savedForm;
 
-      // ✅ UPDATE (normal tenant flow)
+      // ✅ UPDATE
       if (formId && formId !== "undefined") {
         savedForm = await Form.findByIdAndUpdate(
           formId,
-          { $set: updateData },
+          {
+            $set: updateData,
+            ...(docsToAdd.length ? { $push: { documents: { $each: docsToAdd } } } : {}),
+          },
           { new: true, runValidators: true }
         );
 
         if (!savedForm) return res.status(404).json({ message: "Form not found" });
 
-        // ✅ Mark invite used (only if still unused)
         if (inv) {
           await Invite.updateOne(
             { token: inv, usedAt: null },
@@ -210,19 +230,25 @@ router.post(
           message: "Tenant details updated successfully",
           formId: savedForm._id,
           data: savedForm,
+          imagekit: canUseImagekit,
         });
       }
 
-      // ✅ CREATE (only when no invite; e.g. admin direct upload)
+      // ✅ CREATE (admin direct)
       const lastForm = await Form.findOne().sort({ srNo: -1 });
       const srNo = lastForm ? lastForm.srNo + 1 : 1;
 
-      savedForm = await Form.create({ ...updateData, srNo });
+      savedForm = await Form.create({
+        ...updateData,
+        srNo,
+        documents: docsToAdd,
+      });
 
       return res.status(201).json({
         message: "Form saved successfully",
         formId: savedForm._id,
         data: savedForm,
+        imagekit: canUseImagekit,
       });
     } catch (error) {
       console.error("Error in /with-docs:", error);
@@ -230,7 +256,5 @@ router.post(
     }
   }
 );
-
-
 
 module.exports = router;

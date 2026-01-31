@@ -193,12 +193,21 @@ async function createWithOptionalInvite(req, res) {
   const { inviteToken, ...rest } = req.body;
 
   /* ---------------------------------------------------------
-     🛑 FINAL FIX – Remove ALL rent values sent from frontend
+     ✅ FIX 1: STORE monthly rent into baseRent (BEFORE deleting)
+     --------------------------------------------------------- */
+  const monthlyRent = Number(rest.rentAmount ?? rest.baseRent ?? 0);
+  if (Number.isFinite(monthlyRent) && monthlyRent > 0) {
+    rest.baseRent = monthlyRent; // ✅ monthly expected rent stored on tenant
+  }
+
+  /* ---------------------------------------------------------
+     ✅ FIX 2: rents[] means "payments", so always start empty
      --------------------------------------------------------- */
   delete rest.rents;
   delete rest.rentAmount;
   delete rest.month;
   delete rest.date;
+  delete rest.paymentMode;
   rest.rents = []; // 🟢 Force rents to always start empty
 
   // No invite token → normal create
