@@ -14,7 +14,7 @@
 // //   const origin =
 // //     req.get("X-Origin") ||
 // //     req.get("Origin") ||
-// //     " http://localhost:8000";
+// //     "  http://localhost:8000";
 
 // //   const url = new URL("/sismarketing/tenant-intake", origin);
 
@@ -181,7 +181,7 @@
 //     const origin =
 //       req.get("X-Origin") ||
 //       req.get("Origin") ||
-//       " http://localhost:8000";
+//       "  http://localhost:8000";
 
 //     // ✅ make sure this path matches your React route
 //     const url = new URL("/sismarketing/tenant-intake", origin);
@@ -261,6 +261,16 @@ const Invite = require("../models/Invite");
 const Form = require("../models/formModels");
 const Counter = require("../models/counterModel"); // ✅ same counter you already use
 
+const MONTHS = [
+  "Jan","Feb","Mar","Apr","May","Jun",
+  "Jul","Aug","Sep","Oct","Nov","Dec",
+];
+function fmtMonthKey(y, m) {
+  const d = new Date(y, m, 1);
+  if (isNaN(d)) return undefined;
+  return `${MONTHS[d.getMonth()]}-${String(d.getFullYear()).slice(-2)}`;
+}
+
 // ✅ use Counter-based srNo so duplicates don't happen
 async function assignNextSrNoAndUpdateCounter() {
   const [counter, lastForm] = await Promise.all([
@@ -315,6 +325,13 @@ exports.createInvite = async (req, res) => {
 
     const dep = Number(prefill.depositAmount ?? 0);
 
+    const firstRentStatus = String(prefill.firstRentStatus || "NOT_PAID").trim();
+    const jd = new Date(joiningDate);
+    const firstRentMonth =
+      firstRentStatus === "ADVANCE_PAID"
+        ? fmtMonthKey(jd.getFullYear(), jd.getMonth())
+        : fmtMonthKey(jd.getFullYear(), jd.getMonth() + 1);
+
     // ✅ Optional: pre-check bed occupancy (faster error)
     const existing = await Form.findOne({ category, roomNo, bedNo }).select("_id").lean();
     if (existing) {
@@ -329,6 +346,18 @@ exports.createInvite = async (req, res) => {
     try {
       const srNo = await assignNextSrNoAndUpdateCounter();
 
+      const initialRents =
+        firstRentStatus === "ADVANCE_PAID"
+          ? [
+              {
+                rentAmount: monthlyRent,
+                date: new Date(joiningDate),
+                month: firstRentMonth,
+                paymentMode: "Cash",
+              },
+            ]
+          : [];
+
       createdForm = await Form.create({
         srNo,
         category,          // ✅ IMPORTANT (fix null category)
@@ -342,7 +371,9 @@ exports.createInvite = async (req, res) => {
         depositAmount: dep,
         baseRent: monthlyRent,
         rentAmount: monthlyRent,
-        rents: [],
+        firstRentStatus,
+        firstRentMonth,
+        rents: initialRents,
       });
     } catch (e) {
       // ✅ if bed unique index hits (category+roomNo+bedNo)
@@ -368,6 +399,8 @@ exports.createInvite = async (req, res) => {
         baseRent: monthlyRent,
         depositAmount: dep,
         srNo: createdForm.srNo,
+        firstRentStatus,
+        firstRentMonth,
       },
       usedByFormId: createdForm._id, // ✅ link to draft form id
       usedAt: null,
@@ -377,7 +410,7 @@ exports.createInvite = async (req, res) => {
     const origin =
       req.get("X-Origin") ||
       req.get("Origin") ||
-      " http://localhost:8000";
+      "  http://localhost:8000";
 
     const url = new URL("/mutakegirlshostel/tenant-intake", origin);
     url.searchParams.set("tenant", "true");

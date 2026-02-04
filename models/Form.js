@@ -70,6 +70,13 @@ const formSchema = new mongoose.Schema(
     dob: { type: Date, required: true },
 
     baseRent: { type: Number },
+    firstRentStatus: {
+  type: String,
+  enum: ["ADVANCE_PAID", "NOT_PAID"],
+  default: "NOT_PAID",
+},
+firstRentMonth: { type: String }, // e.g. "Jan-26"
+
  rents: {
   type: [
     {

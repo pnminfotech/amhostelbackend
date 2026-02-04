@@ -67,6 +67,7 @@ router.post("/forms-with-docs", upload.array("documents", 10), async (req, res) 
   try {
     const body = req.body || {};
     const formId = body.formId ? String(body.formId).trim() : null;
+    console.log("[forms-with-docs] firstRentStatus:", body.firstRentStatus, "firstRentMonth:", body.firstRentMonth);
 
     const toDate = (v) => (v ? new Date(v) : undefined);
     const toNum = (v) => (v !== undefined && v !== "" ? Number(v) : undefined);
@@ -82,6 +83,8 @@ router.post("/forms-with-docs", upload.array("documents", 10), async (req, res) 
     const paymentMode = String(body.paymentMode || "Cash").trim() || "Cash";
     const rentMonth =
       String(body.month || "").trim() || fmtMonthKey(joiningDate || new Date());
+const firstRentStatus = String(body.firstRentStatus || "NOT_PAID").trim();
+const firstRentMonth = String(body.firstRentMonth || rentMonth).trim();
 
     // ✅ ImageKit STRICT (ImageKit-only)
     const canUseImagekit =
@@ -109,6 +112,9 @@ router.post("/forms-with-docs", upload.array("documents", 10), async (req, res) 
       dateOfJoiningCollege: toDate(body.dateOfJoiningCollege),
       dob: toDate(body.dob),
       baseRent: toNum(body.baseRent),
+      firstRentStatus: body.firstRentStatus,
+firstRentMonth: body.firstRentMonth,
+
       leaveDate: body.leaveDate || undefined,
       category: body.category || undefined,
 
@@ -206,12 +212,20 @@ router.post("/forms-with-docs", upload.array("documents", 10), async (req, res) 
 
     const srNo = counter.seq;
 
-    const created = await Form.create({
-      srNo,
-      ...formPayload,
-      rents: [{ rentAmount, date: joiningDate || new Date(), month: rentMonth, paymentMode }],
-      documents: docs,
-    });
+  const rents =
+  firstRentStatus === "ADVANCE_PAID"
+    ? [{ rentAmount, date: joiningDate || new Date(), month: firstRentMonth, paymentMode }]
+    : [];
+
+const created = await Form.create({
+  srNo,
+  ...formPayload,
+  firstRentStatus,
+  firstRentMonth,
+  rents,
+  documents: docs,
+});
+
 
     return res.status(201).json({ ok: true, form: created, mode: "created", imagekit: true });
   } catch (e) {
