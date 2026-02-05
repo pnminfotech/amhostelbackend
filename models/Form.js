@@ -117,6 +117,11 @@ firstRentMonth: { type: String }, // e.g. "Jan-26"
           ],
           default: "Self",
         },
+        photoTransform: {
+          rotate: { type: Number, default: 0 },
+          flipX: { type: Boolean, default: false },
+          flipY: { type: Boolean, default: false },
+        },
       },
     ],
   },

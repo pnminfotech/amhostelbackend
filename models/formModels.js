@@ -170,6 +170,11 @@ firstRentMonth: { type: String }, // e.g. "Jan-26"
 
     // keep relation simple (or keep your enum if you want)
     relation: { type: String, default: "Document" },
+    photoTransform: {
+      rotate: { type: Number, default: 0 },
+      flipX: { type: Boolean, default: false },
+      flipY: { type: Boolean, default: false },
+    },
   },
 ],
 
