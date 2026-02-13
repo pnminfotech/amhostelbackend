@@ -121,9 +121,9 @@ const formSchema = new mongoose.Schema(
 
     floorNo: { type: String },
     bedNo: { type: String },
-    companyAddress: { type: String },
-    dateOfJoiningCollege: { type: Date, required: false },
-    dob: { type: Date, required: false },
+    companyAddress: { type: String , required:true},
+    dateOfJoiningCollege: { type: Date, required: true },
+    dob: { type: Date, required: true },
 
     baseRent: { type: Number },
     firstRentStatus: {
