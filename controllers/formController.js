@@ -463,6 +463,7 @@ const updateFormById = async (req, res) => {
       "companyAddress","dateOfJoiningCollege","rentAmount","depositAmount",
       "relative1Relation","relative1Name","relative1Phone",
       "relative2Relation","relative2Name","relative2Phone",
+      "pincode","city","state","houseNo","nearbyPlace",
       "documents","status","source",
     ];
 

@@ -95,6 +95,11 @@ const formSchema = new mongoose.Schema(
 
     // main address stays
     address: { type: String, required: false },
+    pincode: { type: String },
+    city: { type: String },
+    state: { type: String },
+    houseNo: { type: String },
+    nearbyPlace: { type: String },
 
     phoneNo: { type: Number, required: true },
 

@@ -366,6 +366,11 @@ exports.createInvite = async (req, res) => {
         phoneNo: prefill.phoneNo
           ? String(prefill.phoneNo).replace(/\D/g, "").slice(0, 10)
           : undefined,
+        pincode: prefill.pincode || undefined,
+        city: prefill.city || undefined,
+        state: prefill.state || undefined,
+        houseNo: prefill.houseNo || undefined,
+        nearbyPlace: prefill.nearbyPlace || undefined,
         joiningDate: new Date(joiningDate),
         depositAmount: dep,
         baseRent: monthlyRent,

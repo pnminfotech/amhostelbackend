@@ -105,6 +105,11 @@ const firstRentMonth = String(body.firstRentMonth || rentMonth).trim();
       roomNo: body.roomNo,
       depositAmount: toNum(body.depositAmount),
       address: body.address,
+      pincode: body.pincode,
+      city: body.city,
+      state: body.state,
+      houseNo: body.houseNo,
+      nearbyPlace: body.nearbyPlace,
       phoneNo: body.phoneNo ? String(body.phoneNo).trim() : "", // ✅ string
       floorNo: body.floorNo,
       bedNo: body.bedNo,
@@ -195,7 +200,15 @@ firstRentMonth: body.firstRentMonth,
       }
 
       if (docs.length) {
-        existing.documents = [...(existing.documents || []), ...docs];
+        // Replace docs by relation on edit to avoid duplicates/wrong labels
+        const incomingRelations = new Set(
+          docs.map((d) => String(d?.relation || "Document").trim())
+        );
+        const filteredExisting = (existing.documents || []).filter((d) => {
+          const rel = String(d?.relation || "Document").trim();
+          return !incomingRelations.has(rel);
+        });
+        existing.documents = [...filteredExisting, ...docs];
       }
 
       await existing.save();
