@@ -3,6 +3,7 @@ const express = require("express");
 const multer = require("multer");
 const sharp = require("sharp");
 const ImageKit = require("imagekit");
+const path = require("path");
 
 const router = express.Router();
 
@@ -18,6 +19,18 @@ const imagekit = new ImageKit({
 
 // compress images under 10KB (same idea as your other route)
 const TARGET = 10 * 1024;
+
+const ALLOWED_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png"]);
+const ALLOWED_IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png"]);
+
+function isAllowedImageFile(file) {
+  if (!file) return false;
+
+  const mime = String(file.mimetype || "").toLowerCase();
+  const ext = path.extname(String(file.originalname || "")).toLowerCase();
+
+  return ALLOWED_IMAGE_MIME_TYPES.has(mime) && ALLOWED_IMAGE_EXTENSIONS.has(ext);
+}
 
 async function compressUnder10KB(buf) {
   let q = 80,
@@ -64,6 +77,15 @@ router.post("/docs", upload.array("documents", 10), async (req, res) => {
     }
 
     const files = req.files || [];
+    const invalidFiles = files.filter((file) => !isAllowedImageFile(file));
+    if (invalidFiles.length) {
+      return res.status(400).json({
+        ok: false,
+        message: "Only JPG, JPEG, and PNG files are allowed.",
+        invalidFiles: invalidFiles.map((file) => file.originalname || "unknown"),
+      });
+    }
+
     const out = [];
 
     for (const f of files) {

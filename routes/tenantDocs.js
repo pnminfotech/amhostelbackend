@@ -26,6 +26,19 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 /* ================== Helpers ================== */
 const TARGET = 10 * 1024; // 10 KB (your choice)
+const ALLOWED_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png"]);
+const ALLOWED_IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png"]);
+
+function isAllowedImageFile(file) {
+  if (!file) return false;
+
+  const mime = String(file.mimetype || "").toLowerCase();
+  const name = String(file.originalname || "");
+  const dotIndex = name.lastIndexOf(".");
+  const ext = dotIndex >= 0 ? name.slice(dotIndex).toLowerCase() : "";
+
+  return ALLOWED_IMAGE_MIME_TYPES.has(mime) && ALLOWED_IMAGE_EXTENSIONS.has(ext);
+}
 
 async function compressUnder10KB(buf) {
   let q = 80, w = null;
@@ -151,6 +164,19 @@ router.post(
       }
 
       // ✅ Upload files to ImageKit and push into documents[]
+      const allFiles = [
+        req.files?.selfAadhar?.[0],
+        req.files?.parentAadhar?.[0],
+        req.files?.photo?.[0],
+      ].filter(Boolean);
+      const invalidFiles = allFiles.filter((file) => !isAllowedImageFile(file));
+      if (invalidFiles.length) {
+        return res.status(400).json({
+          message: "Only JPG, JPEG, and PNG files are allowed.",
+          invalidFiles: invalidFiles.map((file) => file.originalname || "unknown"),
+        });
+      }
+
       const docsToAdd = [];
 
       async function uploadOne(file, relationLabel) {

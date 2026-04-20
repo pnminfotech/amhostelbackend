@@ -278,10 +278,24 @@ const OtpSession = require('../models/OtpSession');
 const authTenant = require('../middleware/tenantAuth');
 const { docsUpload, avatarUpload, ekycUpload } = require('../lib/upload');
 const Payment = require('../models/Payment');
+const path = require('path');
+const fs = require('fs');
 
 /* ------------------------------------------------------------------ */
 /* Helpers kept in this file (no new files created)                    */
 /* ------------------------------------------------------------------ */
+const ALLOWED_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png']);
+const ALLOWED_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png']);
+
+function isAllowedImageFile(file) {
+  if (!file) return false;
+
+  const mime = String(file.mimetype || '').toLowerCase();
+  const ext = path.extname(String(file.originalname || '')).toLowerCase();
+
+  return ALLOWED_IMAGE_MIME_TYPES.has(mime) && ALLOWED_IMAGE_EXTENSIONS.has(ext);
+}
+
 function normalizePhone(raw) {
   // Keep only digits, take last 10 (adapt to your country if needed)
   const digits = String(raw || '').replace(/\D/g, '');
@@ -543,6 +557,9 @@ router.put('/profile', authTenant, async (req, res) => {
 });
 
 router.post('/profile/avatar', authTenant, avatarUpload.single('avatar'), async (req, res) => {
+  if (req.fileValidationError) {
+    return res.status(400).json({ message: req.fileValidationError });
+  }
   if (!req.file) return res.status(400).json({ message: "no file" });
   const url = `/uploads/avatars/${req.file.filename}`;
   req.tenant.avatarUrl = url;
@@ -554,6 +571,14 @@ router.post('/profile/avatar', authTenant, avatarUpload.single('avatar'), async 
 /* DOCS                                                                */
 /* ------------------------------------------------------------------ */
 router.post('/docs', authTenant, docsUpload.array('documents'), async (req, res) => {
+  if (req.fileValidationError) {
+    (req.files || []).forEach((file) => {
+      try {
+        if (file?.path) fs.unlinkSync(file.path);
+      } catch (_) {}
+    });
+    return res.status(400).json({ message: req.fileValidationError });
+  }
   const files = req.files || [];
   const mapped = files.map((f) => ({
     fileName: f.originalname,
@@ -623,6 +648,24 @@ router.post('/ekyc', authTenant, ekycUpload.fields([
   { name: 'docs', maxCount: 10 },
   { name: 'selfie', maxCount: 1 },
 ]), async (req, res) => {
+  if (req.fileValidationError) {
+    [...(req.files?.docs || []), ...(req.files?.selfie || [])].forEach((file) => {
+      try {
+        if (file?.path) fs.unlinkSync(file.path);
+      } catch (_) {}
+    });
+    return res.status(400).json({ message: req.fileValidationError });
+  }
+
+  const invalidFiles = [
+    ...(req.files?.docs || []),
+    ...(req.files?.selfie || []),
+  ].filter((file) => !isAllowedImageFile(file));
+
+  if (invalidFiles.length) {
+    return res.status(400).json({ message: "Only JPG, JPEG, and PNG files are allowed." });
+  }
+
   const { aadhaarLast4, panLast4 } = req.body;
   const docs = (req.files?.docs || []).map(f => ({
     fileName: f.originalname,

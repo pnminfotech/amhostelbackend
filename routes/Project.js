@@ -17,13 +17,45 @@ const storage = multer.diskStorage({
   },
 });
 
-const upload = multer({ storage: storage });
+const ALLOWED_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png"]);
+const ALLOWED_IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png"]);
+
+function isAllowedImageFile(file) {
+  if (!file) return false;
+
+  const mime = String(file.mimetype || "").toLowerCase();
+  const ext = path.extname(String(file.originalname || "")).toLowerCase();
+
+  return ALLOWED_IMAGE_MIME_TYPES.has(mime) && ALLOWED_IMAGE_EXTENSIONS.has(ext);
+}
+
+function imageOnlyFileFilter(req, file, cb) {
+  if (isAllowedImageFile(file)) {
+    cb(null, true);
+    return;
+  }
+
+  req.fileValidationError = "Only JPG, JPEG, and PNG files are allowed.";
+  cb(null, false);
+}
+
+const upload = multer({ storage: storage, fileFilter: imageOnlyFileFilter });
 
 // Create Project
 router.post("/emp/projects", upload.single("image"), async (req, res) => {
   try {
     console.log("Received Data:", req.body); // Check text data
     console.log("Received File:", req.file); // Check file data
+
+    if (req.fileValidationError) {
+      return res.status(400).json({ message: req.fileValidationError });
+    }
+
+    if (req.file && !isAllowedImageFile(req.file)) {
+      return res.status(400).json({
+        message: "Only JPG, JPEG, and PNG files are allowed.",
+      });
+    }
 
     const { heading, date, description, totalAmount, remainingAmount } = req.body;
 
@@ -58,6 +90,16 @@ router.put("/projects/:id", upload.single("image"), async (req, res) => {
   try {
     const { heading, date, description, totalAmount, remainingAmount } = req.body;
     const updateData = { heading, date, description, totalAmount, remainingAmount };
+
+    if (req.fileValidationError) {
+      return res.status(400).json({ message: req.fileValidationError });
+    }
+
+    if (req.file && !isAllowedImageFile(req.file)) {
+      return res.status(400).json({
+        message: "Only JPG, JPEG, and PNG files are allowed.",
+      });
+    }
 
     if (req.file) updateData.image = req.file.filename; // Update image if a new one is uploaded
 

@@ -1,6 +1,7 @@
 const express = require("express");
 const multer = require("multer");
 const sharp = require("sharp");
+const path = require("path");
 
 const router = express.Router();
 
@@ -19,6 +20,17 @@ const imagekit = new ImageKit({
 const upload = multer({ storage: multer.memoryStorage() });
 const TARGET = 300 * 1024; // 300 KB target for faster uploads
 const MIN_WIDTH = 1200; // keep text readable for IDs
+const ALLOWED_IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png"]);
+const ALLOWED_IMAGE_EXTENSIONS = new Set([".jpg", ".jpeg", ".png"]);
+
+function isAllowedImageFile(file) {
+  if (!file) return false;
+
+  const mime = String(file.mimetype || "").toLowerCase();
+  const ext = path.extname(String(file.originalname || "")).toLowerCase();
+
+  return ALLOWED_IMAGE_MIME_TYPES.has(mime) && ALLOWED_IMAGE_EXTENSIONS.has(ext);
+}
 
 // ✅ helper: compress image under TARGET (best effort)
 async function compressUnderTarget(buf, mime) {
@@ -143,6 +155,15 @@ firstRentMonth: body.firstRentMonth,
       : body.relations
       ? [body.relations]
       : [];
+
+    const invalidFiles = files.filter((file) => !isAllowedImageFile(file));
+    if (invalidFiles.length) {
+      return res.status(400).json({
+        ok: false,
+        message: "Only JPG, JPEG, and PNG files are allowed.",
+        invalidFiles: invalidFiles.map((file) => file.originalname || "unknown"),
+      });
+    }
 
     const docs = [];
 
