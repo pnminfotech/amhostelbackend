@@ -86,9 +86,7 @@ router.post("/docs", upload.array("documents", 10), async (req, res) => {
       });
     }
 
-    const out = [];
-
-    for (const f of files) {
+    const out = await Promise.all(files.map(async (f) => {
       const safeBaseName = (f.originalname || "doc").replace(/[^\w.\-]/g, "_");
 
       let uploadBuffer = f.buffer;
@@ -109,7 +107,7 @@ router.post("/docs", upload.array("documents", 10), async (req, res) => {
         useUniqueFileName: true,
       });
 
-      out.push({
+      return {
         // ✅ ImageKit CDN URL (works on localhost + live)
         url: ik.url,
         fileId: ik.fileId,
@@ -120,8 +118,8 @@ router.post("/docs", upload.array("documents", 10), async (req, res) => {
         storedName: ik.name, // ImageKit stored name
         mimetype: contentType,
         size: uploadBuffer.length,
-      });
-    }
+      };
+    }));
 
     return res.json({ ok: true, files: out });
   } catch (e) {

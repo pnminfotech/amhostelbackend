@@ -75,7 +75,25 @@ const formSchema = new mongoose.Schema(
   enum: ["ADVANCE_PAID", "NOT_PAID"],
   default: "NOT_PAID",
 },
-firstRentMonth: { type: String }, // e.g. "Jan-26"
+    firstRentMonth: { type: String }, // e.g. "Jan-26"
+
+    rentHistory: {
+      type: [
+        {
+          effectiveFrom: { type: Date },
+          roomNo: { type: String },
+          bedNo: { type: String },
+          baseRent: { type: Number },
+          rentAmount: { type: Number },
+          previousRoomNo: { type: String },
+          previousBedNo: { type: String },
+          previousBaseRent: { type: Number },
+          previousRentAmount: { type: Number },
+          source: { type: String },
+        },
+      ],
+      default: [],
+    },
 
  rents: {
   type: [
@@ -94,6 +112,24 @@ firstRentMonth: { type: String }, // e.g. "Jan-26"
 },
 
     leaveDate: { type: String },
+    leaveSettlement: {
+      deductFromDeposit: { type: Boolean, default: false },
+      selectedMonths: [{ type: String }],
+      deductions: [
+        {
+          month: { type: String },
+          amount: { type: Number, default: 0 },
+          days: { type: Number, default: 0 },
+          dailyRent: { type: Number, default: 0 },
+          cycleRange: { type: String, default: "" },
+        },
+      ],
+      grossDeposit: { type: Number, default: 0 },
+      totalDeduction: { type: Number, default: 0 },
+      refundableDeposit: { type: Number, default: 0 },
+      amountDueFromTenant: { type: Number, default: 0 },
+      note: { type: String, default: "" },
+    },
 
     documents: [
       {

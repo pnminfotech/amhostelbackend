@@ -24,6 +24,24 @@ const archiveSchema = new mongoose.Schema(
       },
     ],
     leaveDate: { type: String , required: true },
+    leaveSettlement: {
+      deductFromDeposit: { type: Boolean, default: false },
+      selectedMonths: [{ type: String }],
+      deductions: [
+        {
+          month: { type: String },
+          amount: { type: Number, default: 0 },
+          days: { type: Number, default: 0 },
+          dailyRent: { type: Number, default: 0 },
+          cycleRange: { type: String, default: "" },
+        },
+      ],
+      grossDeposit: { type: Number, default: 0 },
+      totalDeduction: { type: Number, default: 0 },
+      refundableDeposit: { type: Number, default: 0 },
+      amountDueFromTenant: { type: Number, default: 0 },
+      note: { type: String, default: "" },
+    },
   });
 
 module.exports = mongoose.model('Archive', archiveSchema);

@@ -2,11 +2,13 @@
 import express from "express";
 import OpenAI from "openai";
 import mongoose from "mongoose";
+import rentHistoryHelpers from "./_helpers/rentHistory.js";
 
 // Re-use your existing Mongoose models/collections
 // Assuming Forms (tenants) and Rooms collections exist like your API uses
 const Form = mongoose.model("Form");   // tenants
 const Room = mongoose.model("Room");   // rooms
+const { getExpectedRentForMonth } = rentHistoryHelpers;
 
 const router = express.Router();
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -44,7 +46,7 @@ const expectFromTenant = (tenant, roomsData) => {
   return 0;
 };
 
-const calculateDue = (rents = [], joiningDateStr) => {
+const calculateDue = (rents = [], joiningDateStr, tenant = {}, roomsData = []) => {
   if (!joiningDateStr) return 0;
   const now = new Date();
   const currentYear = now.getFullYear();
@@ -63,19 +65,15 @@ const calculateDue = (rents = [], joiningDateStr) => {
       })
   );
 
-  const lastPaid = rents
-    .filter(r => r.date && Number(r.rentAmount) > 0)
-    .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
-
-  const rentAmount = lastPaid ? Number(lastPaid.rentAmount) : 0;
-
   let dueCount = 0;
   while (tempDate <= now && tempDate.getFullYear() === currentYear) {
     const key = `${tempDate.getMonth()}-${tempDate.getFullYear()}`;
-    if (!paidMonths.has(key)) dueCount++;
+    if (!paidMonths.has(key)) {
+      dueCount += getExpectedRentForMonth(tenant, tempDate.getFullYear(), tempDate.getMonth(), roomsData);
+    }
     tempDate.setMonth(tempDate.getMonth() + 1);
   }
-  return rentAmount * dueCount;
+  return dueCount;
 };
 
 const getPendingMonthsForStatus = (rents = [], joiningDateStr) => {
@@ -120,7 +118,7 @@ function makeFacts({ tenants, rooms }) {
   }));
 
   const facts = tenants.map(t => {
-    const due = calculateDue(t.rents || [], t.joiningDate);
+    const due = calculateDue(t.rents || [], t.joiningDate, t, roomsData);
     const pendingMonths = getPendingMonthsForStatus(t.rents || [], t.joiningDate);
     const lastPaid = (t.rents || [])
       .filter(r => r.date && Number(r.rentAmount) > 0)

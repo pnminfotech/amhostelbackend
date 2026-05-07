@@ -7,6 +7,11 @@ const router = express.Router();
 
 const Form = require("../models/formModels");
 const Counter = require("../models/counterModel");
+const { normalizeFirstRentCycle } = require("./_helpers/firstRentCycle");
+const {
+  appendRentHistorySnapshot,
+  getCurrentMonthlyRent,
+} = require("./_helpers/rentHistory");
 
 const ImageKit = require("imagekit");
 
@@ -80,6 +85,36 @@ function fmtMonthKey(d) {
   return `${MONTHS[dt.getMonth()]}-${String(dt.getFullYear()).slice(-2)}`; // "Jan-26"
 }
 
+function parseLeaveDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const ymd = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (ymd) return new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]));
+
+  const dmy = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (dmy) return new Date(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]));
+
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function isActiveBedTenant(tenant, category) {
+  const tenantCategory = String(tenant?.category || "").trim();
+  if (tenantCategory && category && tenantCategory !== category) return false;
+
+  const leaveDate = parseLeaveDate(tenant?.leaveDate);
+  if (!leaveDate) return true;
+
+  leaveDate.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return leaveDate > today;
+}
+
 router.post("/forms-with-docs", upload.array("documents", 10), async (req, res) => {
   try {
     const body = req.body || {};
@@ -90,7 +125,7 @@ router.post("/forms-with-docs", upload.array("documents", 10), async (req, res) 
     const toNum = (v) => (v !== undefined && v !== "" ? Number(v) : undefined);
 
     const joiningDate = toDate(body.joiningDate);
-    const rentAmount = toNum(body.rentAmount ?? body.baseRent);
+    const rentAmount = toNum(body.baseRent ?? body.rentAmount);
 
     if (!rentAmount) {
       return res.status(400).json({ ok: false, message: "rentAmount is required" });
@@ -133,7 +168,7 @@ const firstRentMonth = String(body.firstRentMonth || rentMonth).trim();
       companyAddress: body.companyAddress,
       dateOfJoiningCollege: toDate(body.dateOfJoiningCollege),
       dob: toDate(body.dob),
-      baseRent: toNum(body.baseRent),
+      baseRent: toNum(body.baseRent ?? body.rentAmount),
       firstRentStatus: body.firstRentStatus,
 firstRentMonth: body.firstRentMonth,
 
@@ -148,6 +183,29 @@ firstRentMonth: body.firstRentMonth,
       relative2Name: body.relative2Name,
       relative2Phone: body.relative2Phone,
     };
+    const currentRentAmount = getCurrentMonthlyRent(formPayload);
+
+    const selectedRoomNo = String(formPayload.roomNo || "").trim();
+    const selectedBedNo = String(formPayload.bedNo || "").trim();
+    if (selectedRoomNo && selectedBedNo) {
+      const bedCandidates = await Form.find({
+        roomNo: selectedRoomNo,
+        bedNo: selectedBedNo,
+        ...(formId ? { _id: { $ne: formId } } : {}),
+      })
+        .select("_id name category leaveDate")
+        .lean();
+      const occupied = bedCandidates.find((tenant) =>
+        isActiveBedTenant(tenant, String(formPayload.category || "").trim())
+      );
+
+      if (occupied) {
+        return res.status(409).json({
+          ok: false,
+          message: `Bed already occupied: Room "${selectedRoomNo}", Bed "${selectedBedNo}".`,
+        });
+      }
+    }
 
     const files = req.files || [];
     const relations = Array.isArray(body.relations)
@@ -165,12 +223,7 @@ firstRentMonth: body.firstRentMonth,
       });
     }
 
-    const docs = [];
-
-    // ✅ Upload ALL files to ImageKit
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i];
-
+    const docs = await Promise.all(files.map(async (f, i) => {
       const relation = (relations[i] || "Document").toString().trim() || "Document";
       const safeBaseName = (f.originalname || "doc").replace(/[^\w.\-]/g, "_");
 
@@ -196,7 +249,7 @@ firstRentMonth: body.firstRentMonth,
         useUniqueFileName: true,
       });
 
-      docs.push({
+      return {
         fileName: f.originalname,
         relation,
         fileId: uploadRes.fileId,     // string
@@ -204,8 +257,8 @@ firstRentMonth: body.firstRentMonth,
         contentType,
         size: uploadBuffer.length,
         url: uploadRes.url,           // ✅ always present
-      });
-    }
+      };
+    }));
 
     // ✅ Update existing draft
     if (formId) {
@@ -214,7 +267,10 @@ firstRentMonth: body.firstRentMonth,
         return res.status(404).json({ ok: false, message: "Draft form not found" });
       }
 
+      const existingSnapshot = existing.toObject();
       Object.assign(existing, formPayload);
+      Object.assign(existing, normalizeFirstRentCycle(existingSnapshot, formPayload));
+      Object.assign(existing, appendRentHistorySnapshot(existingSnapshot, formPayload));
 
       // ✅ patch rents for old data safety
       existing.rents = (Array.isArray(existing.rents) ? existing.rents : []).map((r) => ({
@@ -223,9 +279,14 @@ firstRentMonth: body.firstRentMonth,
         paymentMode: r.paymentMode || paymentMode,
       }));
 
-      if (existing.rents.length === 0) {
-        existing.rents = [
-          { rentAmount, date: joiningDate || new Date(), month: rentMonth, paymentMode },
+      if (existing.firstRentStatus === "ADVANCE_PAID" && existing.rents.length === 0) {
+      existing.rents = [
+          {
+            rentAmount: currentRentAmount,
+            date: joiningDate || new Date(),
+            month: existing.firstRentMonth || firstRentMonth,
+            paymentMode,
+          },
         ];
       }
 
@@ -255,9 +316,9 @@ firstRentMonth: body.firstRentMonth,
 
     const srNo = counter.seq;
 
-  const rents =
+    const rents =
   firstRentStatus === "ADVANCE_PAID"
-    ? [{ rentAmount, date: joiningDate || new Date(), month: firstRentMonth, paymentMode }]
+    ? [{ rentAmount: currentRentAmount, date: joiningDate || new Date(), month: firstRentMonth, paymentMode }]
     : [];
 
 const created = await Form.create({
@@ -265,6 +326,18 @@ const created = await Form.create({
   ...formPayload,
   firstRentStatus,
   firstRentMonth,
+  rentHistory: currentRentAmount
+    ? [
+        {
+          effectiveFrom: joiningDate || new Date(),
+          roomNo: formPayload.roomNo,
+          bedNo: formPayload.bedNo,
+          baseRent: currentRentAmount,
+          rentAmount: currentRentAmount,
+          source: "initial",
+        },
+      ]
+    : [],
   rents,
   documents: docs,
 });

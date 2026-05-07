@@ -90,6 +90,7 @@ const formSchema = new mongoose.Schema(
 
     name: { type: String, required: true },
     joiningDate: { type: Date, required: true },
+    category: { type: String },
     roomNo: { type: String },
     depositAmount: { type: Number, required: true },
 
@@ -138,6 +139,24 @@ const formSchema = new mongoose.Schema(
 },
 firstRentMonth: { type: String }, // e.g. "Jan-26"
 
+    rentHistory: {
+      type: [
+        {
+          effectiveFrom: { type: Date },
+          roomNo: { type: String },
+          bedNo: { type: String },
+          baseRent: { type: Number },
+          rentAmount: { type: Number },
+          previousRoomNo: { type: String },
+          previousBedNo: { type: String },
+          previousBaseRent: { type: Number },
+          previousRentAmount: { type: Number },
+          source: { type: String },
+        },
+      ],
+      default: [],
+    },
+
     rents: [
       {
         rentAmount: { type: Number, required: true },
@@ -155,6 +174,24 @@ firstRentMonth: { type: String }, // e.g. "Jan-26"
     ],
 
     leaveDate: { type: String },
+    leaveSettlement: {
+      deductFromDeposit: { type: Boolean, default: false },
+      selectedMonths: [{ type: String }],
+      deductions: [
+        {
+          month: { type: String },
+          amount: { type: Number, default: 0 },
+          days: { type: Number, default: 0 },
+          dailyRent: { type: Number, default: 0 },
+          cycleRange: { type: String, default: "" },
+        },
+      ],
+      grossDeposit: { type: Number, default: 0 },
+      totalDeduction: { type: Number, default: 0 },
+      refundableDeposit: { type: Number, default: 0 },
+      amountDueFromTenant: { type: Number, default: 0 },
+      note: { type: String, default: "" },
+    },
 
     // ✅ Updated: supports both legacy disk URLs and DB-backed files
   documents: [

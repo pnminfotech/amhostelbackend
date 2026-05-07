@@ -141,6 +141,7 @@
 const mongoose = require("mongoose");
 const Invite = require("../../models/Invite");
 const Form = require("../../models/formModels");
+const { getCurrentMonthlyRent } = require("../../routes/_helpers/rentHistory");
 
 // Re-use central SrNo helper from formController
 const {
@@ -160,6 +161,60 @@ async function createFormWithSrNo(rest, session) {
     return doc;
   }
   return await Form.create(payload);
+}
+
+function parseLeaveDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const ymd = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (ymd) return new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]));
+
+  const dmy = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (dmy) return new Date(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]));
+
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function isActiveBedTenant(tenant, category) {
+  const tenantCategory = String(tenant?.category || "").trim();
+  if (tenantCategory && category && tenantCategory !== category) return false;
+
+  const leaveDate = parseLeaveDate(tenant?.leaveDate);
+  if (!leaveDate) return true;
+
+  leaveDate.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return leaveDate > today;
+}
+
+async function assertBedIsVacant(rest, excludeTenantId) {
+  const roomNo = String(rest?.roomNo || "").trim();
+  const bedNo = String(rest?.bedNo || "").trim();
+  if (!roomNo || !bedNo) return;
+
+  const category = String(rest?.category || "").trim();
+  const candidates = await Form.find({
+    roomNo,
+    bedNo,
+    ...(excludeTenantId ? { _id: { $ne: excludeTenantId } } : {}),
+  })
+    .select("_id name category leaveDate")
+    .lean();
+  const occupied = candidates.find((tenant) => isActiveBedTenant(tenant, category));
+
+  if (occupied) {
+    const e = new Error(
+      `Bed already occupied by "${occupied.name || "tenant"}": Room "${roomNo}", Bed "${bedNo}".`
+    );
+    e.http = 409;
+    throw e;
+  }
 }
 
 // Fallback flow when transactions are not supported
@@ -182,6 +237,7 @@ const plainSingleUseFlow = async (inviteToken, rest) => {
     throw e;
   }
 
+  await assertBedIsVacant(rest, invite.usedByFormId);
   const doc = await createFormWithSrNo(rest, null);
 
   await Invite.updateOne(
@@ -199,7 +255,7 @@ async function createWithOptionalInvite(req, res) {
   /* ---------------------------------------------------------
      ✅ FIX 1: STORE monthly rent into baseRent (BEFORE deleting)
      --------------------------------------------------------- */
-  const monthlyRent = Number(rest.rentAmount ?? rest.baseRent ?? 0);
+  const monthlyRent = Number(rest.baseRent ?? rest.rentAmount ?? 0);
   if (Number.isFinite(monthlyRent) && monthlyRent > 0) {
     rest.baseRent = monthlyRent; // ✅ monthly expected rent stored on tenant
   }
@@ -213,10 +269,26 @@ async function createWithOptionalInvite(req, res) {
   delete rest.date;
   delete rest.paymentMode;
   rest.rents = []; // 🟢 Force rents to always start empty
+  if (!Array.isArray(rest.rentHistory) || !rest.rentHistory.length) {
+    const initialRent = getCurrentMonthlyRent(rest);
+    if (initialRent > 0) {
+      rest.rentHistory = [
+        {
+          effectiveFrom: rest.joiningDate ? new Date(rest.joiningDate) : new Date(),
+          roomNo: rest.roomNo != null ? String(rest.roomNo) : "",
+          bedNo: rest.bedNo != null ? String(rest.bedNo) : "",
+          baseRent: initialRent,
+          rentAmount: initialRent,
+          source: "initial",
+        },
+      ];
+    }
+  }
 
   // No invite token → normal create
   if (!inviteToken) {
     try {
+      await assertBedIsVacant(rest);
       const saved = await createFormWithSrNo(rest, null);
       return res.status(201).json(saved);
     } catch (err) {
@@ -258,6 +330,7 @@ async function createWithOptionalInvite(req, res) {
         }
 
         // 🟢 rents already sanitized above
+        await assertBedIsVacant(rest, invite.usedByFormId);
         const doc = await createFormWithSrNo(rest, session);
 
         await Invite.updateOne(

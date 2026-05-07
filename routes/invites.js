@@ -125,7 +125,9 @@ router.post("/", async (req, res) => {
       return res.status(400).json({ ok: false, message: "Joining Date is required" });
     }
 
-    const monthlyRent = Number(rentAmount ?? baseRent ?? 0);
+    const monthlyRentSource =
+      baseRent !== "" && baseRent != null ? baseRent : rentAmount;
+    const monthlyRent = Number(monthlyRentSource ?? 0);
     if (!Number.isFinite(monthlyRent) || monthlyRent <= 0) {
       return res.status(400).json({ ok: false, message: "Rent amount is required" });
     }
@@ -172,6 +174,17 @@ router.post("/", async (req, res) => {
     url.searchParams.set("tenant", "true");
     url.searchParams.set("lock", "1");
     url.searchParams.set("inv", token);
+    if (prefill.name) url.searchParams.set("name", String(prefill.name));
+    if (prefill.phoneNo) url.searchParams.set("phoneNo", String(prefill.phoneNo));
+    if (category) url.searchParams.set("category", category);
+    if (roomNo) url.searchParams.set("roomNo", roomNo);
+    if (bedNo) url.searchParams.set("bedNo", bedNo);
+    if (joiningDate) url.searchParams.set("joiningDate", String(joiningDate));
+    if (monthlyRent != null) {
+      url.searchParams.set("baseRent", String(monthlyRent));
+      url.searchParams.set("rentAmount", String(monthlyRent));
+    }
+    if (dep != null) url.searchParams.set("depositAmount", String(dep));
 
     res.json({ ok: true, token, url: url.toString(), formId: createdForm._id });
   } catch (err) {
@@ -205,6 +218,13 @@ router.post("/for-form/:formId", async (req, res) => {
       firstRentMonth: existing.firstRentMonth,
     };
 
+    const monthlyRentSource =
+      prefillBase.baseRent !== "" && prefillBase.baseRent != null
+        ? prefillBase.baseRent
+        : prefillBase.rentAmount;
+    const monthlyRent = Number(monthlyRentSource ?? 0);
+    const dep = Number(existing.depositAmount ?? 0);
+
     const merged = { ...prefillBase, ...(req.body || {}) };
     const prefill = {};
     for (const [k, v] of Object.entries(merged)) {
@@ -227,6 +247,17 @@ router.post("/for-form/:formId", async (req, res) => {
     url.searchParams.set("tenant", "true");
     url.searchParams.set("lock", "1");
     url.searchParams.set("inv", token);
+    if (existing.name) url.searchParams.set("name", String(existing.name));
+    if (existing.phoneNo) url.searchParams.set("phoneNo", String(existing.phoneNo));
+    if (existing.category) url.searchParams.set("category", String(existing.category));
+    if (existing.roomNo) url.searchParams.set("roomNo", String(existing.roomNo));
+    if (existing.bedNo) url.searchParams.set("bedNo", String(existing.bedNo));
+    if (existing.joiningDate) url.searchParams.set("joiningDate", String(existing.joiningDate));
+    if (Number.isFinite(monthlyRent) && monthlyRent > 0) {
+      url.searchParams.set("baseRent", String(monthlyRent));
+      url.searchParams.set("rentAmount", String(monthlyRent));
+    }
+    if (dep != null) url.searchParams.set("depositAmount", String(dep));
 
     res.json({ ok: true, token, url: url.toString(), formId: existing._id, inviteId: inv._id });
   } catch (err) {
@@ -261,11 +292,16 @@ router.get("/:token", async (req, res) => {
     const formId = String(invDoc.usedByFormId?._id || invDoc.usedByFormId);
     const srNo = invDoc.usedByFormId?.srNo;
 
+    const prefill = { ...(invDoc.prefill || {}) };
+    if (prefill.baseRent !== "" && prefill.baseRent != null) {
+      prefill.rentAmount = prefill.baseRent;
+    }
+
     return res.json({
       ok: true,
       formId,
       srNo,
-      prefill: { ...(invDoc.prefill || {}), ...(srNo ? { srNo } : {}) },
+      prefill: { ...prefill, ...(srNo ? { srNo } : {}) },
       // optional info
       alreadyLinked: !!invDoc.usedAt,
     });
@@ -308,9 +344,19 @@ router.put("/:token/submit", async (req, res) => {
     const formId = inv.usedByFormId;
     if (!formId) return res.status(400).json({ ok: false, message: "Draft form missing" });
 
+    const lockedValues = Object.fromEntries(
+      Object.entries(inv.prefill || {}).filter(([, value]) => value !== "" && value != null)
+    );
+    const lockedKeys = new Set(Object.keys(lockedValues));
+    const incoming = { ...(req.body || {}) };
+
+    for (const key of lockedKeys) {
+      delete incoming[key];
+    }
+
     const updated = await Form.findByIdAndUpdate(
       formId,
-      { $set: { ...req.body } },
+      { $set: { ...lockedValues, ...incoming } },
       { new: true }
     );
 

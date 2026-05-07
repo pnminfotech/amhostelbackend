@@ -14,7 +14,7 @@
 // //   const origin =
 // //     req.get("X-Origin") ||
 // //     req.get("Origin") ||
-// //     "   http://localhost:8000";
+// //     "   https://mutakegirlshostel-0ko7.onrender.com";
 
 // //   const url = new URL("/sismarketing/tenant-intake", origin);
 
@@ -181,7 +181,7 @@
 //     const origin =
 //       req.get("X-Origin") ||
 //       req.get("Origin") ||
-//       "   http://localhost:8000";
+//       "   https://mutakegirlshostel-0ko7.onrender.com";
 
 //     // ✅ make sure this path matches your React route
 //     const url = new URL("/sismarketing/tenant-intake", origin);
@@ -271,6 +271,36 @@ function fmtMonthKey(y, m) {
   return `${MONTHS[d.getMonth()]}-${String(d.getFullYear()).slice(-2)}`;
 }
 
+function parseLeaveDate(value) {
+  if (!value) return null;
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
+
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const ymd = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (ymd) return new Date(Number(ymd[1]), Number(ymd[2]) - 1, Number(ymd[3]));
+
+  const dmy = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (dmy) return new Date(Number(dmy[3]), Number(dmy[2]) - 1, Number(dmy[1]));
+
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function isActiveBedTenant(tenant, category) {
+  const tenantCategory = String(tenant?.category || "").trim();
+  if (tenantCategory && category && tenantCategory !== category) return false;
+
+  const leaveDate = parseLeaveDate(tenant?.leaveDate);
+  if (!leaveDate) return true;
+
+  leaveDate.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return leaveDate > today;
+}
+
 // ✅ use Counter-based srNo so duplicates don't happen
 async function assignNextSrNoAndUpdateCounter() {
   const [counter, lastForm] = await Promise.all([
@@ -301,6 +331,16 @@ exports.createInvite = async (req, res) => {
     const token = crypto.randomUUID();
 
     const prefill = req.body || {};
+    const toDate = (v) => (v ? new Date(v) : undefined);
+    const toStr = (v) => (v === "" || v == null ? undefined : String(v));
+    const toNumOrFallback = (...vals) => {
+      for (const v of vals) {
+        if (v === "" || v == null) continue;
+        const n = Number(v);
+        if (Number.isFinite(n)) return n;
+      }
+      return undefined;
+    };
 
     // ✅ required (to prevent null category / missing allocation)
     const category = String(prefill.category || "").trim();
@@ -317,7 +357,7 @@ exports.createInvite = async (req, res) => {
     if (!name) return res.status(400).json({ ok: false, message: "Name is required" });
     if (!joiningDate) return res.status(400).json({ ok: false, message: "Joining Date is required" });
 
-    const monthlyRent = Number(prefill.rentAmount ?? prefill.baseRent ?? 0);
+    const monthlyRent = toNumOrFallback(prefill.baseRent, prefill.rentAmount);
     if (!Number.isFinite(monthlyRent) || monthlyRent <= 0) {
       return res.status(400).json({ ok: false, message: "Rent amount is required" });
     }
@@ -332,11 +372,14 @@ exports.createInvite = async (req, res) => {
         : fmtMonthKey(jd.getFullYear(), jd.getMonth() + 1);
 
     // ✅ Optional: pre-check bed occupancy (faster error)
-    const existing = await Form.findOne({ category, roomNo, bedNo }).select("_id").lean();
+    const bedCandidates = await Form.find({ roomNo, bedNo })
+      .select("_id name category leaveDate")
+      .lean();
+    const existing = bedCandidates.find((tenant) => isActiveBedTenant(tenant, category));
     if (existing) {
       return res.status(409).json({
         ok: false,
-        message: `Bed already occupied: Category "${category}", Room "${roomNo}", Bed "${bedNo}".`,
+        message: `Bed already occupied by "${existing.name || "tenant"}": Category "${category}", Room "${roomNo}", Bed "${bedNo}".`,
       });
     }
 
@@ -366,11 +409,21 @@ exports.createInvite = async (req, res) => {
         phoneNo: prefill.phoneNo
           ? String(prefill.phoneNo).replace(/\D/g, "").slice(0, 10)
           : undefined,
+        address: toStr(prefill.address),
         pincode: prefill.pincode || undefined,
         city: prefill.city || undefined,
         state: prefill.state || undefined,
         houseNo: prefill.houseNo || undefined,
         nearbyPlace: prefill.nearbyPlace || undefined,
+        relative1Relation: prefill.relative1Relation || undefined,
+        relative1Name: prefill.relative1Name || undefined,
+        relative1Phone: prefill.relative1Phone || undefined,
+        relative2Relation: prefill.relative2Relation || undefined,
+        relative2Name: prefill.relative2Name || undefined,
+        relative2Phone: prefill.relative2Phone || undefined,
+        companyAddress: toStr(prefill.companyAddress),
+        dateOfJoiningCollege: toDate(prefill.dateOfJoiningCollege),
+        dob: toDate(prefill.dob),
         joiningDate: new Date(joiningDate),
         depositAmount: dep,
         baseRent: monthlyRent,
@@ -382,9 +435,20 @@ exports.createInvite = async (req, res) => {
     } catch (e) {
       // ✅ if bed unique index hits (category+roomNo+bedNo)
       if (e?.code === 11000 && e?.keyPattern?.category && e?.keyPattern?.roomNo && e?.keyPattern?.bedNo) {
+        const activeConflict = (await Form.find({ roomNo, bedNo })
+          .select("_id name category leaveDate")
+          .lean()).find((tenant) => isActiveBedTenant(tenant, category));
+
+        if (!activeConflict) {
+          return res.status(409).json({
+            ok: false,
+            message: `Bed is vacant, but MongoDB still has a unique index blocking reuse for Category "${category}", Room "${roomNo}", Bed "${bedNo}". Drop the old category_roomNo_bedNo unique index or make it partial for active tenants.`,
+          });
+        }
+
         return res.status(409).json({
           ok: false,
-          message: `Bed already occupied: Category "${category}", Room "${roomNo}", Bed "${bedNo}".`,
+          message: `Bed already occupied by "${activeConflict.name || "tenant"}": Category "${category}", Room "${roomNo}", Bed "${bedNo}".`,
         });
       }
       throw e;
@@ -413,12 +477,23 @@ exports.createInvite = async (req, res) => {
     const origin =
       req.get("X-Origin") ||
       req.get("Origin") ||
-      "   http://localhost:8000";
+      "   https://mutakegirlshostel-0ko7.onrender.com";
 
     const url = new URL("/mutakegirlshostel/tenant-intake", origin);
     url.searchParams.set("tenant", "true");
     url.searchParams.set("lock", "1");
     url.searchParams.set("inv", token);
+    if (prefill.name) url.searchParams.set("name", String(prefill.name));
+    if (prefill.phoneNo) url.searchParams.set("phoneNo", String(prefill.phoneNo));
+    if (category) url.searchParams.set("category", category);
+    if (roomNo) url.searchParams.set("roomNo", roomNo);
+    if (bedNo) url.searchParams.set("bedNo", bedNo);
+    if (joiningDate) url.searchParams.set("joiningDate", String(joiningDate));
+    if (monthlyRent != null) {
+      url.searchParams.set("baseRent", String(monthlyRent));
+      url.searchParams.set("rentAmount", String(monthlyRent));
+    }
+    if (dep != null) url.searchParams.set("depositAmount", String(dep));
 
     return res.json({
       ok: true,
@@ -462,12 +537,20 @@ exports.validateInvite = async (req, res) => {
 
     const formId = String(invDoc.usedByFormId?._id || invDoc.usedByFormId);
     const srNo = invDoc.usedByFormId?.srNo;
+    const prefill = { ...(invDoc.prefill || {}) };
+    if (prefill.baseRent !== "" && prefill.baseRent != null) {
+      prefill.rentAmount = prefill.baseRent;
+    }
+    const lockedFields = Object.entries(invDoc.prefill || {})
+      .filter(([, value]) => value !== "" && value != null)
+      .map(([key]) => key);
 
     return res.json({
       ok: true,
       formId,
       srNo,
-      prefill: { ...(invDoc.prefill || {}), ...(srNo ? { srNo } : {}) },
+      prefill: { ...prefill, ...(srNo ? { srNo } : {}) },
+      lockedFields,
     });
   } catch (err) {
     console.error("Validate invite failed:", err);

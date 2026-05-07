@@ -1,9 +1,15 @@
 // controllers/formController.js
+const mongoose = require("mongoose");
 const Form = require("../models/formModels");
 const Archive = require("../models/archiveSchema");
 const DuplicateForm = require("../models/DuplicateForm");
 const cron = require("node-cron");
 const Counter = require("../models/counterModel");
+const { normalizeFirstRentCycle } = require("../routes/_helpers/firstRentCycle");
+const {
+  appendRentHistorySnapshot,
+  getCurrentMonthlyRent,
+} = require("../routes/_helpers/rentHistory");
 
 /* ============================================================================
    SrNo HELPERS
@@ -72,7 +78,7 @@ const getNextSrNo = async (req, res) => {
 
 const processLeave = async (req, res) => {
   try {
-    const { tenantId, leaveDate } = req.body;
+    const { tenantId, leaveDate, leaveSettlement } = req.body;
 
     if (!tenantId || !leaveDate) {
       return res.status(400).json({
@@ -86,6 +92,7 @@ const processLeave = async (req, res) => {
         $set: {
           leaveDate,
           isOnLeave: true,
+          ...(leaveSettlement ? { leaveSettlement } : {}),
         },
       },
       {
@@ -142,15 +149,31 @@ cron.schedule("0 0 * * *", async () => {
 const saveForm = async (req, res) => {
   try {
     const nextSrNo = await assignNextSrNoAndUpdateCounter();
-    req.body.srNo = String(nextSrNo);
+    const payload = { ...(req.body || {}), srNo: String(nextSrNo) };
+
+    if (!Array.isArray(payload.rentHistory)) {
+      const currentRent = getCurrentMonthlyRent(payload);
+      if (currentRent > 0) {
+        payload.rentHistory = [
+          {
+            effectiveFrom: payload.joiningDate ? new Date(payload.joiningDate) : new Date(),
+            roomNo: payload.roomNo != null ? String(payload.roomNo) : "",
+            bedNo: payload.bedNo != null ? String(payload.bedNo) : "",
+            baseRent: currentRent,
+            rentAmount: currentRent,
+            source: "initial",
+          },
+        ];
+      }
+    }
 
     console.log(
       "📥 Incoming payload to saveForm:",
-      JSON.stringify(req.body, null, 2)
+      JSON.stringify(payload, null, 2)
     );
-    console.log("📂 Documents received:", req.body.documents);
+    console.log("📂 Documents received:", payload.documents);
 
-    const newForm = new Form(req.body);
+    const newForm = new Form(payload);
     await newForm.save();
 
     res
@@ -197,32 +220,80 @@ const getMonthYear = (date) => {
   })}-${d.getFullYear().toString().slice(-2)}`;
 };
 
+const normalizeRentMonth = (month, date) => {
+  if (typeof month === "string" && month.trim()) {
+    return month.trim();
+  }
+
+  const d = new Date(date);
+  if (!Number.isNaN(d.getTime())) {
+    return getMonthYear(d);
+  }
+
+  return null;
+};
+
+const normalizeRentEntry = (rent, fallbackDate) => {
+  const rawDate = rent?.date ? new Date(rent.date) : new Date(fallbackDate);
+  const safeDate = Number.isNaN(rawDate.getTime()) ? new Date() : rawDate;
+  const safeMonth = normalizeRentMonth(rent?.month, safeDate);
+
+  return {
+    rentAmount: Number(rent?.rentAmount) || 0,
+    date: safeDate,
+    month: safeMonth,
+    paymentMode: rent?.paymentMode || "Cash",
+  };
+};
+
 const updateForm = async (req, res) => {
   const { id } = req.params;
-  const { rentAmount, date, month, paymentMode } = req.body;
+  const { rentAmount, date, month, paymentMode, rentUpdateMode } = req.body;
+  const resolvedMonth = normalizeRentMonth(month, date);
+  const resolvedDate = new Date(date);
 
   try {
     const form = await Form.findById(id);
     if (!form) return res.status(404).json({ message: "Form not found" });
 
-    const rentIndex = form.rents.findIndex((rent) => rent.month === month);
-
-    if (rentIndex !== -1) {
-      form.rents[rentIndex] = {
-        rentAmount: Number(rentAmount),
-        date: new Date(date),
-        month,
-        paymentMode,
-      };
-    } else {
-      form.rents.push({
-        rentAmount: Number(rentAmount),
-        date: new Date(date),
-        month,
-        paymentMode,
+    if (!resolvedMonth) {
+      return res.status(400).json({
+        message: "Rent month is required. Please select a valid month or date.",
       });
     }
 
+    if (Number.isNaN(resolvedDate.getTime())) {
+      return res.status(400).json({
+        message: "Valid rent date is required.",
+      });
+    }
+
+    const normalizedRents = (Array.isArray(form.rents) ? form.rents : []).map((rent) =>
+      normalizeRentEntry(rent, resolvedDate)
+    );
+
+    const rentIndex = normalizedRents.findIndex((rent) => rent.month === resolvedMonth);
+    const incomingAmount = Number(rentAmount) || 0;
+    const shouldReplace = rentUpdateMode === "replace";
+
+    if (rentIndex !== -1) {
+      const existingAmount = Number(normalizedRents[rentIndex]?.rentAmount) || 0;
+      normalizedRents[rentIndex] = {
+        rentAmount: shouldReplace ? incomingAmount : existingAmount + incomingAmount,
+        date: resolvedDate,
+        month: resolvedMonth,
+        paymentMode: paymentMode || "Cash",
+      };
+    } else {
+      normalizedRents.push({
+        rentAmount: incomingAmount,
+        date: resolvedDate,
+        month: resolvedMonth,
+        paymentMode: paymentMode || "Cash",
+      });
+    }
+
+    form.rents = normalizedRents;
     await form.save({ validateModifiedOnly: true });
 
     res.status(200).json(form);
@@ -398,16 +469,23 @@ const getArchivedForms = async (req, res) => {
 const updateProfile = async (req, res) => {
   try {
     const { id } = req.params;
-    const updateData = req.body;
+    const existing = await Form.findById(id);
+
+    if (!existing) {
+      return res.status(404).json({ message: "Entity not found" });
+    }
+
+    const updateData = { ...(req.body || {}) };
+    Object.assign(updateData, normalizeFirstRentCycle(existing.toObject(), updateData));
+    const rentHistoryUpdate = appendRentHistorySnapshot(existing.toObject(), updateData);
+    if (rentHistoryUpdate.rentHistory) {
+      Object.assign(updateData, rentHistoryUpdate);
+    }
 
     const updatedForm = await Form.findByIdAndUpdate(id, updateData, {
       new: true,
       runValidators: true,
     });
-
-    if (!updatedForm) {
-      return res.status(404).json({ message: "Entity not found" });
-    }
 
     res.status(200).json(updatedForm);
   } catch (error) {
@@ -460,11 +538,12 @@ const updateFormById = async (req, res) => {
 
     const allowed = [
       "name","phoneNo","address","joiningDate","dob","relativeAddress1",
-      "companyAddress","dateOfJoiningCollege","rentAmount","depositAmount",
+      "roomNo","bedNo","baseRent","rentAmount","companyAddress","dateOfJoiningCollege","depositAmount",
       "relative1Relation","relative1Name","relative1Phone",
       "relative2Relation","relative2Name","relative2Phone",
       "pincode","city","state","houseNo","nearbyPlace",
-      "documents","status","source",
+      "documents","status","source","rentHistory",
+      "shiftEffectiveFrom","shiftDate","effectiveFrom",
     ];
 
     const body = (req.body && typeof req.body === "object") ? req.body : {}; // ✅ safe
@@ -474,13 +553,20 @@ const updateFormById = async (req, res) => {
       if (body[k] !== undefined) update[k] = body[k];
     }
 
+    const existing = await Form.findById(id);
+    if (!existing) return res.status(404).json({ message: "Form not found" });
+
+    Object.assign(update, normalizeFirstRentCycle(existing.toObject(), update));
+    const rentHistoryUpdate = appendRentHistorySnapshot(existing.toObject(), update);
+    if (rentHistoryUpdate.rentHistory) {
+      Object.assign(update, rentHistoryUpdate);
+    }
+
     const updated = await Form.findByIdAndUpdate(
       id,
       { $set: update },
       { new: true, runValidators: true }
     );
-
-    if (!updated) return res.status(404).json({ message: "Form not found" });
 
     return res.json({ ok: true, form: updated });
   } catch (err) {
