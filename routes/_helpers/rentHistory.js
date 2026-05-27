@@ -89,6 +89,34 @@ function normalizeSnapshot(entry = {}, fallbackDate = null) {
   };
 }
 
+function pruneConflictingFutureSnapshots(snapshots = [], tenant = {}) {
+  const currentRoomNo = tenant?.roomNo != null ? String(tenant.roomNo) : "";
+  const currentBedNo = tenant?.bedNo != null ? String(tenant.bedNo) : "";
+  if (!currentRoomNo || !currentBedNo || !Array.isArray(snapshots) || !snapshots.length) {
+    return snapshots;
+  }
+
+  let anchorIndex = -1;
+  snapshots.forEach((snap, index) => {
+    if (
+      String(snap?.roomNo || "") === currentRoomNo &&
+      String(snap?.bedNo || "") === currentBedNo
+    ) {
+      anchorIndex = index;
+    }
+  });
+
+  if (anchorIndex === -1) return snapshots;
+
+  return snapshots.filter((snap, index) => {
+    if (index <= anchorIndex) return true;
+    return (
+      String(snap?.roomNo || "") === currentRoomNo &&
+      String(snap?.bedNo || "") === currentBedNo
+    );
+  });
+}
+
 function getCurrentMonthlyRent(tenant = {}, roomsData = []) {
   if (roomsData && tenant?.roomNo && tenant?.bedNo) {
     const room = roomsData.find((r) => String(r.roomNo) === String(tenant.roomNo));
@@ -150,6 +178,22 @@ function getShiftPreservedRent(tenant = {}) {
   return canUsePaidRent && latestPaid > 0 && storedRent > 0 && latestPaid < storedRent
     ? latestPaid
     : 0;
+}
+
+function getLatestShiftCutoffDate(tenant = {}) {
+  const direct =
+    toValidDate(tenant.shiftEffectiveFrom) ||
+    toValidDate(tenant.shiftDate) ||
+    toValidDate(tenant.effectiveFrom);
+  if (direct) return direct;
+
+  const history = Array.isArray(tenant.rentHistory) ? tenant.rentHistory : [];
+  const latestShift = history
+    .map((entry) => normalizeSnapshot(entry))
+    .filter((entry) => entry && entry.source === "shift")
+    .sort((a, b) => b.effectiveFrom - a.effectiveFrom)[0];
+
+  return latestShift?.effectiveFrom || null;
 }
 
 function getCycleStartForMonth(tenant = {}, y, m) {
@@ -263,7 +307,8 @@ function buildRentTimeline(tenant = {}, roomsData = []) {
     });
   }
 
-  return snapshots.sort((a, b) => a.effectiveFrom - b.effectiveFrom);
+  const sorted = snapshots.sort((a, b) => a.effectiveFrom - b.effectiveFrom);
+  return pruneConflictingFutureSnapshots(sorted, tenant);
 }
 
 function getExpectedRentForMonth(tenant = {}, y, m, roomsData = []) {
@@ -299,7 +344,16 @@ function getExpectedRentForMonth(tenant = {}, y, m, roomsData = []) {
     }
   }
 
-  return expected || getCurrentMonthlyRent(tenant, roomsData);
+  let resolved = expected || getCurrentMonthlyRent(tenant, roomsData);
+  const shiftCutoff = getLatestShiftCutoffDate(tenant);
+  const paidAmount = getPaidAmountForMonth(tenant.rents, y, m);
+
+  // Do not retroactively raise older paid cycles after a later bed shift.
+  if (shiftCutoff && cycleEnd <= shiftCutoff && paidAmount > 0 && paidAmount < resolved) {
+    resolved = paidAmount;
+  }
+
+  return resolved;
 }
 
 function getPaymentMonth(rent = {}) {
