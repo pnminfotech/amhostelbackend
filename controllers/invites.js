@@ -14,7 +14,7 @@
 // //   const origin =
 // //     req.get("X-Origin") ||
 // //     req.get("Origin") ||
-// //     "  https://hosteldemo-g8f0.onrender.com";
+// //     "  http://localhost:8000";
 
 // //   const url = new URL("/sismarketing/tenant-intake", origin);
 
@@ -181,7 +181,7 @@
 //     const origin =
 //       req.get("X-Origin") ||
 //       req.get("Origin") ||
-//       "  https://hosteldemo-g8f0.onrender.com";
+//       "  http://localhost:8000";
 
 //     // ✅ make sure this path matches your React route
 //     const url = new URL("/sismarketing/tenant-intake", origin);
@@ -477,9 +477,9 @@ exports.createInvite = async (req, res) => {
     const origin =
       req.get("X-Origin") ||
       req.get("Origin") ||
-      "  https://hosteldemo-g8f0.onrender.com";
+      "  http://localhost:8000";
 
-    const url = new URL("/mut/tenant-intake", origin);
+    const url = new URL("/tenant-intake", origin);
     url.searchParams.set("tenant", "true");
     url.searchParams.set("lock", "1");
     url.searchParams.set("inv", token);

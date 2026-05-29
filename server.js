@@ -31,7 +31,38 @@ const invitesRouter = require("./routes/invites");
 
 const app = express();
 
-app.use(cors());
+const DEFAULT_ALLOWED_ORIGINS = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "https://pnminfotech.com",
+  "https://www.pnminfotech.com",
+];
+
+const envAllowedOrigins = String(
+  process.env.CORS_ALLOWED_ORIGINS ||
+    process.env.ALLOWED_ORIGINS ||
+    process.env.FRONTEND_ORIGIN ||
+    ""
+)
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const allowedOrigins = [...new Set([...DEFAULT_ALLOWED_ORIGINS, ...envAllowedOrigins])];
+
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error(`Origin not allowed by CORS: ${origin}`));
+  },
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Origin"],
+};
+
+app.use(cors(corsOptions));
+app.options("*", cors(corsOptions));
 app.use(express.json());
 
 // Static files for uploaded content (if any local)
