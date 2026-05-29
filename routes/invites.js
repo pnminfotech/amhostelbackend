@@ -170,7 +170,7 @@ router.post("/", async (req, res) => {
     const origin =
       req.headers["x-origin"] || `${req.protocol}://${req.get("host")}`;
 
-    const url = new URL("/hosteldemo/tenant-intake", origin);
+    const url = new URL("/mutakegirlshostel/tenant-intake", origin);
     url.searchParams.set("tenant", "true");
     url.searchParams.set("lock", "1");
     url.searchParams.set("inv", token);
@@ -243,7 +243,7 @@ router.post("/for-form/:formId", async (req, res) => {
     const origin =
       req.headers["x-origin"] || `${req.protocol}://${req.get("host")}`;
 
-    const url = new URL("/hosteldemo/tenant-intake", origin);
+    const url = new URL("/mutakegirlshostel/tenant-intake", origin);
     url.searchParams.set("tenant", "true");
     url.searchParams.set("lock", "1");
     url.searchParams.set("inv", token);

@@ -14,7 +14,7 @@
 // //   const origin =
 // //     req.get("X-Origin") ||
 // //     req.get("Origin") ||
-// //     "  https://hosteldemo-api.pnminfotech.com/";
+// //     "  https://mutakehostel-api.pnminfotech.com";
 
 // //   const url = new URL("/sismarketing/tenant-intake", origin);
 
@@ -181,7 +181,7 @@
 //     const origin =
 //       req.get("X-Origin") ||
 //       req.get("Origin") ||
-//       "  https://hosteldemo-api.pnminfotech.com/";
+//       "  https://mutakehostel-api.pnminfotech.com";
 
 //     // ✅ make sure this path matches your React route
 //     const url = new URL("/sismarketing/tenant-intake", origin);
@@ -270,7 +270,7 @@ function getTenantIntakePath() {
     process.env.PUBLIC_URL ||
     process.env.FRONTEND_BASENAME ||
     process.env.APP_BASENAME ||
-    "/hosteldemo"
+    "/mutakegirlshostel"
   ).trim();
 
   const basePath =
@@ -493,7 +493,7 @@ exports.createInvite = async (req, res) => {
     const origin =
       req.get("X-Origin") ||
       req.get("Origin") ||
-      "  https://hosteldemo-api.pnminfotech.com/";
+      "  https://mutakehostel-api.pnminfotech.com";
 
     const url = new URL(getTenantIntakePath(), origin);
     url.searchParams.set("tenant", "true");

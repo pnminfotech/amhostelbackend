@@ -221,12 +221,12 @@ router.post(
         const up = await imagekit.upload({
           file: uploadBuffer,
           fileName: uploadName,
-          folder: "/hosteldemo/tenant_docs",
+          folder: "/mutakegirlshostel/tenant_docs",
           useUniqueFileName: true,
         });
 
         // ✅ EXACTLY HERE your doc.url becomes:
-        // "https://ik.imagekit.io/<id>/hosteldemo/tenant_docs/....webp"
+        // "https://ik.imagekit.io/<id>/mutakegirlshostel/tenant_docs/....webp"
         docsToAdd.push({
           fileName: file.originalname,
           relation: relationLabel,

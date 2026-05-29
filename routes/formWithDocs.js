@@ -258,7 +258,7 @@ firstRentMonth: body.firstRentMonth,
       const uploadRes = await imagekit.upload({
         file: uploadBuffer,
         fileName: uploadName,
-        folder: "/hosteldemo/docs",
+        folder: "/mutakegirlshostel/docs",
         useUniqueFileName: true,
       });
 
