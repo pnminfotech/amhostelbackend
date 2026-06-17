@@ -18,6 +18,11 @@ const tenantSchema = new mongoose.Schema(
       enum: ["active", "left"],
       default: "active",
     },
+    canteen: {
+      type: String,
+      enum: ["yes", "no"],
+      default: "no",
+    },
   },
   { timestamps: true }
 );

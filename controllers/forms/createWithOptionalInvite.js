@@ -142,11 +142,16 @@ const mongoose = require("mongoose");
 const Invite = require("../../models/Invite");
 const Form = require("../../models/formModels");
 const { getCurrentMonthlyRent } = require("../../routes/_helpers/rentHistory");
+const { sendAdmissionMessage } = require("../../lib/msg91Admission");
 
 // Re-use central SrNo helper from formController
 const {
   assignNextSrNoAndUpdateCounter,
 } = require("../formController");
+
+function normalizeCanteenValue(value) {
+  return String(value || "").trim().toLowerCase() === "yes" ? "yes" : "no";
+}
 
 // Always assign SrNo on server using shared helper
 async function createFormWithSrNo(rest, session) {
@@ -253,6 +258,16 @@ const plainSingleUseFlow = async (inviteToken, rest) => {
 async function createWithOptionalInvite(req, res) {
   const session = await mongoose.startSession();
   const { inviteToken, ...rest } = req.body;
+  rest.canteen = normalizeCanteenValue(rest.canteen);
+  if (Object.prototype.hasOwnProperty.call(rest, "shopBusiness")) {
+    rest.shopBusiness = String(rest.shopBusiness || "").trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(rest, "shopName")) {
+    rest.shopName = String(rest.shopName || "").trim();
+  }
+  if (Object.prototype.hasOwnProperty.call(rest, "companyAddress")) {
+    rest.companyAddress = String(rest.companyAddress || "").trim();
+  }
 
   /* ---------------------------------------------------------
      ✅ FIX 1: STORE monthly rent into baseRent (BEFORE deleting)
@@ -292,7 +307,23 @@ async function createWithOptionalInvite(req, res) {
     try {
       await assertBedIsVacant(rest);
       const saved = await createFormWithSrNo(rest, null);
-      return res.status(201).json(saved);
+      let messageStatus = { ok: false, skipped: true, reason: "Not attempted" };
+      try {
+        messageStatus = await sendAdmissionMessage(saved);
+      } catch (error) {
+        console.error("MSG91 admission message failed:", error?.data || error?.message || error);
+        messageStatus = {
+          ok: false,
+          skipped: false,
+          reason: error?.message || "MSG91 send failed",
+          data: error?.data || null,
+          status: error?.status || null,
+        };
+      }
+
+      const payload = saved.toObject ? saved.toObject() : saved;
+      payload._messageStatus = messageStatus;
+      return res.status(201).json(payload);
     } catch (err) {
       console.error("create form (no invite) error:", err);
       const isDupSr =
@@ -358,7 +389,23 @@ async function createWithOptionalInvite(req, res) {
       }
     }
 
-    return res.status(201).json(created);
+    let messageStatus = { ok: false, skipped: true, reason: "Not attempted" };
+    try {
+      messageStatus = await sendAdmissionMessage(created);
+    } catch (error) {
+      console.error("MSG91 admission message failed:", error?.data || error?.message || error);
+      messageStatus = {
+        ok: false,
+        skipped: false,
+        reason: error?.message || "MSG91 send failed",
+        data: error?.data || null,
+        status: error?.status || null,
+      };
+    }
+
+    const payload = created?.toObject ? created.toObject() : created;
+    payload._messageStatus = messageStatus;
+    return res.status(201).json(payload);
   } catch (err) {
     console.error("create (with invite) error:", err);
     const isDupSr =

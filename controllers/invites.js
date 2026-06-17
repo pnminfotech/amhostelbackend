@@ -357,11 +357,20 @@ exports.createInvite = async (req, res) => {
       }
       return undefined;
     };
+    const normalizeTrackerType = (value) => {
+      const raw = String(value || "").trim().toLowerCase();
+      if (raw === "room" || raw === "shop" || raw === "bed") return raw;
+      return "";
+    };
 
     // ✅ required (to prevent null category / missing allocation)
     const category = String(prefill.category || "").trim();
     const roomNo = String(prefill.roomNo || "").trim();
     const bedNo = String(prefill.bedNo || "").trim();
+    const propertyType =
+      normalizeTrackerType(prefill.propertyType) ||
+      normalizeTrackerType(prefill.trackerType) ||
+      (bedNo === "ROOM-1" ? "room" : bedNo === "SHOP-1" ? "shop" : "bed");
 
     const name = String(prefill.name || "").trim();
     const joiningDate = prefill.joiningDate;
@@ -419,8 +428,12 @@ exports.createInvite = async (req, res) => {
       createdForm = await Form.create({
         srNo,
         category,          // ✅ IMPORTANT (fix null category)
+        propertyType,
+        roomId: prefill.roomId ? String(prefill.roomId).trim() : undefined,
         roomNo,
         bedNo,
+        wingName: toStr(prefill.wingName),
+        floorNo: toStr(prefill.floorNo),
         name,
         phoneNo: prefill.phoneNo
           ? String(prefill.phoneNo).replace(/\D/g, "").slice(0, 10)
@@ -431,6 +444,7 @@ exports.createInvite = async (req, res) => {
         state: prefill.state || undefined,
         houseNo: prefill.houseNo || undefined,
         nearbyPlace: prefill.nearbyPlace || undefined,
+        relativeAddress: toStr(prefill.relativeAddress),
         relative1Relation: prefill.relative1Relation || undefined,
         relative1Name: prefill.relative1Name || undefined,
         relative1Phone: prefill.relative1Phone || undefined,
@@ -438,6 +452,12 @@ exports.createInvite = async (req, res) => {
         relative2Name: prefill.relative2Name || undefined,
         relative2Phone: prefill.relative2Phone || undefined,
         companyAddress: toStr(prefill.companyAddress),
+        shopName: toStr(prefill.shopName),
+        shopBusiness: toStr(prefill.shopBusiness),
+        familyMembers:
+          prefill.familyMembers === "" || prefill.familyMembers == null
+            ? undefined
+            : Number(prefill.familyMembers),
         dateOfJoiningCollege: toDate(prefill.dateOfJoiningCollege),
         dob: toDate(prefill.dob),
         joiningDate: new Date(joiningDate),
@@ -475,9 +495,14 @@ exports.createInvite = async (req, res) => {
       token,
       prefill: {
         ...prefill,
+        trackerType: propertyType,
+        propertyType,
         category,
+        roomId: prefill.roomId ? String(prefill.roomId).trim() : undefined,
         roomNo,
         bedNo,
+        wingName: toStr(prefill.wingName),
+        floorNo: toStr(prefill.floorNo),
         name,
         rentAmount: monthlyRent,
         baseRent: monthlyRent,

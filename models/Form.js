@@ -37,6 +37,12 @@ const formSchema = new mongoose.Schema(
     joiningDate: { type: Date, required: true },
     roomId: { type: String },
     roomNo: { type: String },
+    propertyType: {
+      type: String,
+      enum: ["bed", "room", "shop"],
+      default: "bed",
+    },
+    wingName: { type: String },
     depositAmount: { type: Number, required: true },
 
     // main address
@@ -66,7 +72,10 @@ const formSchema = new mongoose.Schema(
 
     floorNo: { type: String },
     bedNo: { type: String },
+    shopName: { type: String },
+    shopBusiness: { type: String },
     companyAddress: { type: String },
+    familyMembers: { type: Number },
     dateOfJoiningCollege: { type: Date, required: true },
     dob: { type: Date, required: true },
 

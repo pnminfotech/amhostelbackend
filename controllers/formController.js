@@ -9,7 +9,31 @@ const { normalizeFirstRentCycle } = require("../routes/_helpers/firstRentCycle")
 const {
   appendRentHistorySnapshot,
   getCurrentMonthlyRent,
+  getExpectedRentForMonth,
 } = require("../routes/_helpers/rentHistory");
+const {
+  sendRentReminderMessage,
+  shouldSendReminderForTenant,
+} = require("../lib/msg91RentReminder");
+const { sendRentReceiptMessage } = require("../lib/msg91RentReceipt");
+
+function normalizeCanteenValue(value) {
+  return String(value || "").trim().toLowerCase() === "yes" ? "yes" : "no";
+}
+
+function parseOptionalNumber(value) {
+  if (value === "" || value == null) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parsePhoneNumber(value) {
+  if (value === "" || value == null) return undefined;
+  const digits = String(value).replace(/\D/g, "");
+  if (!digits) return undefined;
+  const parsed = Number(digits);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
 
 /* ============================================================================
    SrNo HELPERS
@@ -141,6 +165,108 @@ cron.schedule("0 0 * * *", async () => {
   }
 });
 
+cron.schedule("5 0 * * *", async () => {
+  try {
+    const now = new Date();
+    const flowId = String(
+      process.env.MSG91_RENT_REMINDER_FLOW_ID ||
+        process.env.MSG91_PAYMENT_REMINDER_FLOW_ID ||
+        ""
+    ).trim();
+
+    const tenants = await Form.find({
+      $or: [{ leaveDate: { $exists: false } }, { leaveDate: null }, { leaveDate: "" }],
+    });
+
+    let sentCount = 0;
+
+    for (const tenant of tenants) {
+      const reminderContext = shouldSendReminderForTenant(tenant, now);
+      if (!reminderContext) {
+        continue;
+      }
+
+      const targetMonth = reminderContext.monthKey;
+      const dueDate = reminderContext.displayDate;
+      const reminderHistory = Array.isArray(tenant.smsReminderHistory)
+        ? tenant.smsReminderHistory
+        : [];
+      const alreadySent = reminderHistory.some(
+        (entry) =>
+          String(entry?.type || "") === "rent_due" &&
+          String(entry?.month || "") === targetMonth &&
+          String(entry?.status || "") === "sent"
+      );
+
+      if (alreadySent) {
+        continue;
+      }
+
+      const expected = getExpectedRentForMonth(
+        tenant,
+        reminderContext.dueDate.getFullYear(),
+        reminderContext.dueDate.getMonth()
+      );
+      const paid = (Array.isArray(tenant.rents) ? tenant.rents : []).reduce((sum, rent) => {
+        if (String(rent?.month || "").trim() !== targetMonth) return sum;
+        return sum + (Number(rent?.rentAmount) || 0);
+      }, 0);
+      const outstanding = Math.max(0, Number(expected || 0) - Number(paid || 0));
+
+      if (outstanding <= 0) {
+        continue;
+      }
+
+      try {
+        await sendRentReminderMessage({
+          tenant,
+          amount: outstanding,
+          month: targetMonth,
+          dueDate,
+        });
+
+        tenant.smsReminderHistory = [
+          ...reminderHistory,
+          {
+            type: "rent_due",
+            month: targetMonth,
+            flowId,
+            sentAt: new Date(),
+            amount: outstanding,
+            status: "sent",
+          },
+        ];
+        await tenant.save({ validateModifiedOnly: true });
+        sentCount += 1;
+      } catch (error) {
+        console.error(
+          "MSG91 rent reminder failed:",
+          tenant?._id,
+          error?.data || error?.message || error
+        );
+
+        tenant.smsReminderHistory = [
+          ...reminderHistory,
+          {
+            type: "rent_due",
+            month: targetMonth,
+            flowId,
+            sentAt: new Date(),
+            amount: outstanding,
+            status: "failed",
+            reason: String(error?.message || "MSG91 send failed"),
+          },
+        ];
+        await tenant.save({ validateModifiedOnly: true });
+      }
+    }
+
+    console.log(`Rent due reminder job completed. Sent ${sentCount} reminder(s).`);
+  } catch (error) {
+    console.error("Rent due reminder cron failed:", error);
+  }
+});
+
 /* ============================================================================
    Legacy saveForm (NOT used by /api/forms – but kept for compatibility)
    Uses assignNextSrNoAndUpdateCounter so no duplicates.
@@ -150,6 +276,7 @@ const saveForm = async (req, res) => {
   try {
     const nextSrNo = await assignNextSrNoAndUpdateCounter();
     const payload = { ...(req.body || {}), srNo: String(nextSrNo) };
+    payload.canteen = normalizeCanteenValue(payload.canteen);
 
     if (!Array.isArray(payload.rentHistory)) {
       const currentRent = getCurrentMonthlyRent(payload);
@@ -296,7 +423,30 @@ const updateForm = async (req, res) => {
     form.rents = normalizedRents;
     await form.save({ validateModifiedOnly: true });
 
-    res.status(200).json(form);
+    let rentReceiptStatus = { ok: false, skipped: true, reason: "Not attempted" };
+    if (incomingAmount > 0) {
+      try {
+        rentReceiptStatus = await sendRentReceiptMessage({
+          tenant: form,
+          amount: incomingAmount,
+          month: resolvedMonth,
+        });
+      } catch (error) {
+        console.error("MSG91 rent receipt failed:", error?.data || error?.message || error);
+        rentReceiptStatus = {
+          ok: false,
+          skipped: false,
+          reason: error?.message || "MSG91 rent receipt failed",
+          data: error?.data || null,
+          status: error?.status || null,
+        };
+      }
+    }
+
+    res.status(200).json({
+      ...form.toObject(),
+      _rentReceiptStatus: rentReceiptStatus,
+    });
   } catch (error) {
     console.error("⚠ Update rent error:", error);
     res.status(500).json({ message: "Error updating rent: " + error.message });
@@ -476,6 +626,27 @@ const updateProfile = async (req, res) => {
     }
 
     const updateData = { ...(req.body || {}) };
+    delete updateData._id;
+    delete updateData.__v;
+    delete updateData.createdAt;
+    delete updateData.updatedAt;
+    const optionalDateFields = ["dob", "dateOfJoiningCollege", "joiningDate", "firstRentPaidDate"];
+    optionalDateFields.forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(updateData, field) && updateData[field] === "") {
+        updateData[field] = undefined;
+      }
+    });
+    ["familyMembers", "depositAmount", "baseRent", "rentAmount"].forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(updateData, field)) {
+        updateData[field] = parseOptionalNumber(updateData[field]);
+      }
+    });
+    if (Object.prototype.hasOwnProperty.call(updateData, "phoneNo")) {
+      updateData.phoneNo = parsePhoneNumber(updateData.phoneNo);
+    }
+    if (Object.prototype.hasOwnProperty.call(updateData, "canteen")) {
+      updateData.canteen = normalizeCanteenValue(updateData.canteen);
+    }
     Object.assign(updateData, normalizeFirstRentCycle(existing.toObject(), updateData));
     const rentHistoryUpdate = appendRentHistorySnapshot(existing.toObject(), updateData);
     if (rentHistoryUpdate.rentHistory) {
@@ -489,6 +660,7 @@ const updateProfile = async (req, res) => {
 
     res.status(200).json(updatedForm);
   } catch (error) {
+    console.error("updateProfile error:", error);
     res.status(500).json({ message: "Server Error", error });
   }
 };
@@ -538,11 +710,11 @@ const updateFormById = async (req, res) => {
 
     const allowed = [
       "name","phoneNo","address","joiningDate","dob","relativeAddress1",
-      "roomNo","bedNo","baseRent","rentAmount","companyAddress","dateOfJoiningCollege","depositAmount",
+      "roomNo","bedNo","baseRent","rentAmount","companyAddress","shopName","shopBusiness","dateOfJoiningCollege","depositAmount","familyMembers",
       "relative1Relation","relative1Name","relative1Phone",
       "relative2Relation","relative2Name","relative2Phone",
       "pincode","city","state","houseNo","nearbyPlace",
-      "documents","status","source","rentHistory",
+      "documents","status","source","rentHistory","canteen","canteenHistory",
       "shiftEffectiveFrom","shiftDate","effectiveFrom",
     ];
 
@@ -551,6 +723,33 @@ const updateFormById = async (req, res) => {
 
     for (const k of allowed) {
       if (body[k] !== undefined) update[k] = body[k];
+    }
+
+    ["dob", "dateOfJoiningCollege", "joiningDate", "firstRentPaidDate"].forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(update, field) && update[field] === "") {
+        update[field] = undefined;
+      }
+    });
+    ["familyMembers", "depositAmount", "baseRent", "rentAmount"].forEach((field) => {
+      if (Object.prototype.hasOwnProperty.call(update, field)) {
+        update[field] = parseOptionalNumber(update[field]);
+      }
+    });
+    if (Object.prototype.hasOwnProperty.call(update, "phoneNo")) {
+      update.phoneNo = parsePhoneNumber(update.phoneNo);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(update, "canteen")) {
+      update.canteen = normalizeCanteenValue(update.canteen);
+    }
+    if (Object.prototype.hasOwnProperty.call(update, "shopBusiness")) {
+      update.shopBusiness = String(update.shopBusiness || "").trim();
+    }
+    if (Object.prototype.hasOwnProperty.call(update, "shopName")) {
+      update.shopName = String(update.shopName || "").trim();
+    }
+    if (Object.prototype.hasOwnProperty.call(update, "companyAddress")) {
+      update.companyAddress = String(update.companyAddress || "").trim();
     }
 
     const existing = await Form.findById(id);

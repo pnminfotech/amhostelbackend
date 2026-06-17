@@ -72,6 +72,63 @@ router.get("/form/:id", getFormById);
 // router.patch("/forms/:id", updateFormById);
 router.put("/forms/:id", updateFormById);
 
+router.post("/forms/:id/canteen", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const form = await Form.findById(id);
+
+    if (!form) {
+      return res.status(404).json({ message: "Form not found" });
+    }
+
+    const month = String(req.body?.month || "").trim();
+    const mealCount = Number(req.body?.mealCount || 0);
+    const rate = 75;
+    const status = String(req.body?.status || "due").trim().toLowerCase() === "paid" ? "paid" : "due";
+
+    if (!month) {
+      return res.status(400).json({ message: "Month is required" });
+    }
+
+    if (!Number.isFinite(mealCount) || mealCount < 0) {
+      return res.status(400).json({ message: "Valid meal count is required" });
+    }
+
+    const amount = mealCount * rate;
+    const history = Array.isArray(form.canteenHistory) ? [...form.canteenHistory] : [];
+    const existingIndex = history.findIndex((entry) => String(entry?.month || "").trim() === month);
+
+    const nextEntry = {
+      month,
+      mealCount,
+      rate,
+      amount,
+      status,
+      createdAt: existingIndex >= 0 ? history[existingIndex]?.createdAt || new Date() : new Date(),
+    };
+
+    if (existingIndex >= 0) {
+      history[existingIndex] = nextEntry;
+    } else {
+      history.push(nextEntry);
+    }
+
+    history.sort((a, b) => String(b?.month || "").localeCompare(String(a?.month || "")));
+
+    form.canteenHistory = history;
+    form.canteen = "yes";
+    await form.save();
+
+    return res.json({ ok: true, form });
+  } catch (error) {
+    console.error("save canteen error:", error);
+    return res.status(500).json({
+      message: "Failed to save canteen entry",
+      error: error.message,
+    });
+  }
+});
+
 // rent entry delete by monthKey
 router.delete("/form/:formId/rent/:monthYear", rentAmountDel);
 

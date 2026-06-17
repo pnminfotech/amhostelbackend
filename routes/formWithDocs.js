@@ -12,6 +12,7 @@ const {
   appendRentHistorySnapshot,
   getCurrentMonthlyRent,
 } = require("./_helpers/rentHistory");
+const { sendAdmissionMessage } = require("../lib/msg91Admission");
 
 const ImageKit = require("imagekit");
 
@@ -166,6 +167,7 @@ const firstRentMonth = String(body.firstRentMonth || rentMonth).trim();
       joiningDate,
       roomId: body.roomId ? String(body.roomId).trim() : undefined,
       roomNo: body.roomNo,
+      wingName: body.wingName ? String(body.wingName).trim() : undefined,
       depositAmount: toNum(body.depositAmount),
       address: body.address,
       pincode: body.pincode,
@@ -176,7 +178,13 @@ const firstRentMonth = String(body.firstRentMonth || rentMonth).trim();
       phoneNo: body.phoneNo ? String(body.phoneNo).trim() : "", // ✅ string
       floorNo: body.floorNo,
       bedNo: body.bedNo,
-      companyAddress: body.companyAddress,
+      shopName: String(body.shopName || "").trim(),
+      shopBusiness: String(body.shopBusiness || "").trim(),
+      companyAddress: String(body.companyAddress || "").trim(),
+      familyMembers:
+        body.familyMembers === "" || body.familyMembers == null
+          ? undefined
+          : toNum(body.familyMembers),
       dateOfJoiningCollege: toDate(body.dateOfJoiningCollege),
       dob: toDate(body.dob),
       baseRent: toNum(body.baseRent ?? body.rentAmount),
@@ -185,6 +193,7 @@ firstRentMonth: body.firstRentMonth,
 
       leaveDate: body.leaveDate || undefined,
       category: body.category || undefined,
+      canteen: String(body.canteen || "no").trim().toLowerCase() === "yes" ? "yes" : "no",
 
       // ✅ relatives (if you are sending these)
       relative1Relation: body.relative1Relation,
@@ -355,8 +364,27 @@ const created = await Form.create({
   documents: docs,
 });
 
+    let messageStatus = { ok: false, skipped: true, reason: "Not attempted" };
+    try {
+      messageStatus = await sendAdmissionMessage(created);
+    } catch (error) {
+      console.error("MSG91 admission message failed:", error?.data || error?.message || error);
+      messageStatus = {
+        ok: false,
+        skipped: false,
+        reason: error?.message || "MSG91 send failed",
+        data: error?.data || null,
+        status: error?.status || null,
+      };
+    }
 
-    return res.status(201).json({ ok: true, form: created, mode: "created", imagekit: true });
+    return res.status(201).json({
+      ok: true,
+      form: created,
+      mode: "created",
+      imagekit: true,
+      messageStatus,
+    });
   } catch (e) {
     console.error("forms-with-docs error:", e);
     return res.status(400).json({ ok: false, message: e.message || "Failed" });

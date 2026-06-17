@@ -93,6 +93,12 @@ const formSchema = new mongoose.Schema(
     category: { type: String },
     roomId: { type: String },
     roomNo: { type: String },
+    propertyType: {
+      type: String,
+      enum: ["bed", "room", "shop"],
+      default: "bed",
+    },
+    wingName: { type: String },
     depositAmount: { type: Number, required: true },
 
     // main address stays
@@ -128,7 +134,10 @@ const formSchema = new mongoose.Schema(
 
     floorNo: { type: String },
     bedNo: { type: String },
+    shopName: { type: String },
+    shopBusiness: { type: String },
     companyAddress: { type: String },
+    familyMembers: { type: Number },
     dateOfJoiningCollege: { type: Date,  },
     dob: { type: Date },
 
@@ -220,6 +229,42 @@ firstRentMonth: { type: String }, // e.g. "Jan-26"
     },
   },
 ],
+    canteen: {
+      type: String,
+      enum: ["yes", "no"],
+      default: "no",
+    },
+    canteenHistory: {
+      type: [
+        {
+          month: { type: String, required: true },
+          mealCount: { type: Number, default: 0 },
+          rate: { type: Number, default: 75 },
+          amount: { type: Number, default: 0 },
+          status: {
+            type: String,
+            enum: ["paid", "due"],
+            default: "due",
+          },
+          createdAt: { type: Date, default: Date.now },
+        },
+      ],
+      default: [],
+    },
+    smsReminderHistory: {
+      type: [
+        {
+          type: { type: String, default: "rent_due" },
+          month: { type: String, required: true },
+          flowId: { type: String, default: "" },
+          sentAt: { type: Date, default: Date.now },
+          amount: { type: Number, default: 0 },
+          status: { type: String, enum: ["sent", "failed"], default: "sent" },
+          reason: { type: String, default: "" },
+        },
+      ],
+      default: [],
+    },
 
   },
   { timestamps: true }
