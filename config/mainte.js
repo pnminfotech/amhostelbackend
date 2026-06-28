@@ -1,13 +1,12 @@
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
+const { getMongoOptions, getMongoUri } = require("./mongoOptions");
 
 dotenv.config();
 
-const suppliersDB = mongoose.createConnection(process.env.MONGO_URI, {
+const suppliersDB = mongoose.createConnection(getMongoUri(), getMongoOptions({
   dbName: "Suppliers",
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
+}));
 
 suppliersDB.on("connected", () =>
   console.log("✅ Connected to Suppliers Database")

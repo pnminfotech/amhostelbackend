@@ -165,7 +165,7 @@ cron.schedule("0 0 * * *", async () => {
   }
 });
 
-cron.schedule("5 0 * * *", async () => {
+cron.schedule("30 13 * * *", async () => {
   try {
     const now = new Date();
     const flowId = String(
@@ -204,8 +204,8 @@ cron.schedule("5 0 * * *", async () => {
 
       const expected = getExpectedRentForMonth(
         tenant,
-        reminderContext.dueDate.getFullYear(),
-        reminderContext.dueDate.getMonth()
+        reminderContext.billingYear ?? reminderContext.dueDate.getFullYear(),
+        reminderContext.billingMonthIndex ?? reminderContext.dueDate.getMonth()
       );
       const paid = (Array.isArray(tenant.rents) ? tenant.rents : []).reduce((sum, rent) => {
         if (String(rent?.month || "").trim() !== targetMonth) return sum;
@@ -265,6 +265,8 @@ cron.schedule("5 0 * * *", async () => {
   } catch (error) {
     console.error("Rent due reminder cron failed:", error);
   }
+}, {
+  timezone: "Asia/Kolkata",
 });
 
 /* ============================================================================

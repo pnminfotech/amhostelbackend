@@ -1,13 +1,12 @@
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
+const { getMongoOptions, getMongoUri } = require("./mongoOptions");
 
 dotenv.config();
 
-const khataBookDB = mongoose.createConnection(process.env.MONGO_URI, {
+const khataBookDB = mongoose.createConnection(getMongoUri(), getMongoOptions({
   dbName: "khataBook",
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
+}));
 
 khataBookDB.on("connected", () =>
   console.log("✅ Connected to khataBook Database")

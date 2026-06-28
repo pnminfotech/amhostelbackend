@@ -1,13 +1,12 @@
 const mongoose = require("mongoose");
 const dotenv = require("dotenv");
+const { getMongoOptions, getMongoUri } = require("./mongoOptions");
 
 dotenv.config();
 
-const projectDB = mongoose.createConnection(process.env.MONGO_URI, {
+const projectDB = mongoose.createConnection(getMongoUri(), getMongoOptions({
   dbName: "Project",
-  useNewUrlParser: true,
-  useUnifiedTopology: true,
-});
+}));
 
 projectDB.on("connected", () =>
   console.log("✅ Connected to Project Database")

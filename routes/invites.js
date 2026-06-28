@@ -26,7 +26,7 @@ function inferTrackerType(source = {}) {
 }
 
 function tenantIntakePath() {
-  return "/kpshevkaripg/tenant-intake";
+  return "/amhostel/tenant-intake";
 }
 
 async function assignNextSrNoAndUpdateCounter() {

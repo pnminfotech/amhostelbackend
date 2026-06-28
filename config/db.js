@@ -1,6 +1,7 @@
 // config/db.js  (COMMONJS VERSION)
 const mongoose = require("mongoose");
 const Form = require("../models/formModels");
+const { getMongoOptions, getMongoUri } = require("./mongoOptions");
 
 async function dropObsoleteBedUniqueIndexes() {
   try {
@@ -29,23 +30,24 @@ async function dropObsoleteBedUniqueIndexes() {
 }
 
 async function connectDB() {
-  const uri = process.env.MONGO_URI;
+  const uri = getMongoUri();
   if (!uri) {
     console.error("MONGO_URI missing in .env");
     process.exit(1);
   }
 
   try {
-    await mongoose.connect(uri, {
-      serverSelectionTimeoutMS: 10000,
-      connectTimeoutMS: 10000,
-      retryWrites: true,
-    });
+    await mongoose.connect(uri, getMongoOptions());
     console.log("DB Connected");
     await dropObsoleteBedUniqueIndexes();
   } catch (err) {
     // Do NOT crash the process; log and keep server running
     console.error("DB connect failed:", err.message);
+    if (err?.code === "ERR_SSL_TLSV1_ALERT_INTERNAL_ERROR" || /SSL|TLS/i.test(err?.message || "")) {
+      console.error(
+        "Mongo TLS hint: check Atlas Network Access IP whitelist, cluster status, and MONGO_URI credentials."
+      );
+    }
   }
 }
 

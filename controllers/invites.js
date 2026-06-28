@@ -14,7 +14,7 @@
 // //   const origin =
 // //     req.get("X-Origin") ||
 // //     req.get("Origin") ||
-// //     "  http://localhost:8000/";
+// //     "    http://localhost:8000/";
 
 // //   const url = new URL("/sismarketing/tenant-intake", origin);
 
@@ -181,7 +181,7 @@
 //     const origin =
 //       req.get("X-Origin") ||
 //       req.get("Origin") ||
-//       "  http://localhost:8000/";
+//       "    http://localhost:8000/";
 
 //     // ✅ make sure this path matches your React route
 //     const url = new URL("/sismarketing/tenant-intake", origin);
@@ -270,7 +270,7 @@ function getTenantIntakePath() {
     process.env.PUBLIC_URL ||
     process.env.FRONTEND_BASENAME ||
     process.env.APP_BASENAME ||
-    "/kpshevkaripg"
+    "/amhostel"
   ).trim();
 
   const basePath =
@@ -518,7 +518,7 @@ exports.createInvite = async (req, res) => {
     const origin =
       req.get("X-Origin") ||
       req.get("Origin") ||
-      "  http://localhost:8000/";
+      "    http://localhost:8000/";
 
     const url = new URL(getTenantIntakePath(), origin);
     url.searchParams.set("tenant", "true");
